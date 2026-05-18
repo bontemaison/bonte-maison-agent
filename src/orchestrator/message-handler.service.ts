@@ -610,9 +610,9 @@ export class MessageHandlerService {
             : summary
                 .map(
                   (w) =>
-                    `${this.formatDate(w.checkIn)} → ${this.formatDate(w.checkOut)} at ${this.formatPrice(w.total)}`,
+                    `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} at ${this.formatPrice(w.total)}`,
                 )
-                .join('; '),
+                .join('\n'),
       });
     } else if (parsed.monthRangeQuery) {
       const summary = await this.helpers.multiMonthAvailabilitySummary(
@@ -627,9 +627,9 @@ export class MessageHandlerService {
             : summary
                 .map(
                   (w) =>
-                    `${this.formatDate(w.checkIn)} → ${this.formatDate(w.checkOut)} at ${this.formatPrice(w.total)}`,
+                    `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} at ${this.formatPrice(w.total)}`,
                 )
-                .join('; '),
+                .join('\n'),
       });
     }
 
@@ -1240,7 +1240,7 @@ export class MessageHandlerService {
       case 'polite_close':
         return "The customer is winding down ('I'll think about it', 'cool that sounds nice', 'let me check with my partner'). Reply warmly with no pressure. IMPORTANT: if the recent history shows we've just listed availability or quoted a price, weave in a single short hold offer — e.g. 'happy to hold one of those weeks briefly while you decide'. If there's no recent quote/availability in history, just a warm acknowledgement is enough.";
       case 'month_query':
-        return "You're presenting availability (or lack of it) for a month or month range. STYLE RULES for this scenario (tight, punchy, NOT a sales pitch): one short sentence per period/week, split with full stops not commas. Do NOT chain clauses with commas like 'September is quieter and often still very warm, with the wine harvest gets going, and there are five weeks'. Instead: 'September is quieter and still very warm. The wine harvest is on, with local food and wine events. Five consecutive weeks free from 29 August at £3,995 each.' Drop filler phrases like 'full school holiday feel', 'real atmosphere', 'often still'. After the period summary, end with a single clear question to the guest, e.g. 'Which works best for you?' Do NOT also list every period if only one was asked about. Offer to hold a week briefly only if the guest has signalled interest.";
+        return "You're presenting availability (or lack of it) for a month or month range. STYLE RULES (tight, punchy, NOT a sales pitch):\n\n1) Open with one short sentence stating what's available, e.g. 'July 2027 has three weeks available right now.'\n2) Then list each available week ON ITS OWN LINE, with a blank line before and after the list. Format: '11 July to 18 July at £4,995.' One week per line. Do NOT chain weeks together in a single sentence with commas or semicolons. Do NOT use bullets or dashes — just plain lines separated by newlines.\n3) After the list, end with a single short question on its own line, e.g. 'Which of those works best for you?' If the guest has signalled interest, you may add one short hold-offer sentence; otherwise skip it.\n\nExample shape:\n\nJuly 2027 has three weeks available right now.\n\n11 July to 18 July at £4,995.\n18 July to 25 July at £4,995.\n25 July to 1 August at £4,995.\n\nWhich of those works best for you? Happy to hold a week for a few days while you have a think.\n\nDrop filler phrases like 'full school holiday feel', 'real atmosphere', 'often still'. Do NOT list weeks for a period the guest didn't ask about.";
       case 'correction':
         return "The customer is correcting or pushing back on YOUR previous reply. Apologise briefly for the misunderstanding and ask what they'd like to know. Don't escalate.";
       case 'unclear':

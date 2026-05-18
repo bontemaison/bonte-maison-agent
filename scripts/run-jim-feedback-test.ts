@@ -169,6 +169,30 @@ const SCENARIOS: Scenario[] = [
     ],
   },
 
+  // ── Feedback 7 (Jim 2026-05): month availability listed line-by-line ──
+  {
+    id: 'month-query-line-separated',
+    title: 'Month availability lists each week on its own line',
+    feedbackRef: 'Feedback #7 (line breaks)',
+    turns: [
+      {
+        customer: 'What weeks are free in July 2027?',
+        mustInclude: [
+          // Each week must be followed by a newline (or end-of-string), not run inline.
+          /july.*£\s?4,?995\.\s*\n/i,
+        ],
+        mustNotInclude: [
+          // No semicolon-joined or comma-spliced runs of weeks on one line
+          // (`[ \t]` so the regex doesn't false-positive across real newlines).
+          /£\s?4,?995[^\n.]{0,40};[ \t]*\d/i,
+          /£\s?4,?995[,.]?[ \t]+\d{1,2}[ \t]+(july|aug)/i,
+        ],
+        notes:
+          'Each available week should sit on its own line with blank lines around the block. Jim flagged that the bot was running the weeks together inline.',
+      },
+    ],
+  },
+
   // ── Feedback 6: "can you help me book" shouldn't ask for card details ──
   {
     id: 'book-no-card-details',
