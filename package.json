@@ -26,6 +26,7 @@
     "trigger:holds": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/trigger-holds.ts",
     "owner:cmd": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/send-owner-command.ts",
     "test:feedback": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/run-feedback-test.ts",
+    "test:feedback:jim": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/run-jim-feedback-test.ts",
     "test:email": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/send-test-email.ts",
     "test:template": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/send-test-template.ts",
     "test:nudges": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/send-test-nudges.ts"

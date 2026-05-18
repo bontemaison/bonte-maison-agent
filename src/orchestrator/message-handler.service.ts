@@ -26,7 +26,7 @@ import {
   ParseResult,
   ParserService,
 } from '../parser/parser.service';
-import { PricingService, Quote } from '../pricing/pricing.service';
+import { PricingService } from '../pricing/pricing.service';
 import { TemplatesService, TemplateVars } from '../templates/templates.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 
@@ -198,6 +198,25 @@ export class MessageHandlerService {
     previousIntent: string | null,
   ): Promise<void> {
     const name = merged.customerName ?? '';
+
+    // After the bot suggested Sunday-to-Sunday dates via dates_not_sunday_to_sunday
+    // (or minimum_stay_not_met), a short affirmative ("yes please", "ok", "yes is
+    // it available then") is the customer confirming those suggested dates. Run
+    // availability for the pending Sun dates — not booking_confirmed_handoff,
+    // not the same not-Sunday template again.
+    if (
+      previousIntent === 'awaiting_dates_confirmation' &&
+      merged.checkIn &&
+      merged.checkOut &&
+      (parsed.intent === 'acknowledgment' ||
+        parsed.intent === 'booking_confirmation' ||
+        parsed.intent === 'availability_inquiry' ||
+        parsed.intent === 'polite_close')
+    ) {
+      await this.handleAvailability(from, merged);
+      return;
+    }
+
     const intent =
       parsed.guestEmail && previousIntent === 'booking_confirmation'
         ? 'booking_confirmation'
@@ -341,6 +360,11 @@ export class MessageHandlerService {
               new Date(rule.suggestedCheckOut),
             ),
           });
+          await this.parkSuggestedDates(
+            from,
+            rule.suggestedCheckIn,
+            rule.suggestedCheckOut,
+          );
           return;
         case 'min_stay':
           await this.sendTemplate(from, 'minimum_stay_not_met', {
@@ -350,6 +374,11 @@ export class MessageHandlerService {
               new Date(rule.suggestedCheckOut),
             ),
           });
+          await this.parkSuggestedDates(
+            from,
+            rule.suggestedCheckIn,
+            rule.suggestedCheckOut,
+          );
           return;
         case 'long_stay_manual':
           await this.handoffTemplate(from, '', 'long_stay_manual_pricing', {
@@ -367,20 +396,13 @@ export class MessageHandlerService {
     const datesLabel = `${this.isoDate(merged.checkIn)} → ${this.isoDate(merged.checkOut)}`;
 
     if (!icalOk) {
-      const sent = await this.trySendUnavailableWithAlternative(
-        from,
+      await this.sendTemplate(from, 'availability_no_priority', {
         name,
-        merged.checkIn,
-        merged.checkOut,
-      );
-      if (!sent) {
-        await this.sendTemplate(from, 'availability_no_handoff', {
-          name,
-          check_in: this.formatDate(merged.checkIn),
-          check_out: this.formatDate(merged.checkOut),
-          month: this.monthName(merged.checkIn),
-        });
-      }
+        name_comma: name ? `, ${name}` : '',
+        check_in: this.formatDate(merged.checkIn),
+        check_out: this.formatDate(merged.checkOut),
+        month: this.monthName(merged.checkIn),
+      });
       await this.recordQuoteSafe(from, datesLabel, 0, 'unavailable');
       await this.notifications.notifyOwnerAboutConversation(
         from,
@@ -455,6 +477,11 @@ export class MessageHandlerService {
             suggested_check_in: this.formatDate(new Date(rule.suggestedCheckIn)),
             suggested_check_out: this.formatDate(new Date(rule.suggestedCheckOut)),
           });
+          await this.parkSuggestedDates(
+            from,
+            rule.suggestedCheckIn,
+            rule.suggestedCheckOut,
+          );
           return;
         case 'min_stay':
           await this.sendTemplate(from, 'minimum_stay_not_met', {
@@ -462,6 +489,11 @@ export class MessageHandlerService {
             suggested_check_in: this.formatDate(new Date(rule.suggestedCheckIn)),
             suggested_check_out: this.formatDate(new Date(rule.suggestedCheckOut)),
           });
+          await this.parkSuggestedDates(
+            from,
+            rule.suggestedCheckIn,
+            rule.suggestedCheckOut,
+          );
           return;
         case 'long_stay_manual':
           await this.handoffTemplate(from, '', 'long_stay_manual_pricing', {
@@ -478,8 +510,9 @@ export class MessageHandlerService {
 
     if (!icalOk) {
       const datesLabel = `${this.isoDate(merged.checkIn)} → ${this.isoDate(merged.checkOut)}`;
-      await this.sendTemplate(from, 'availability_no_handoff', {
+      await this.sendTemplate(from, 'availability_no_priority', {
         name,
+        name_comma: name ? `, ${name}` : '',
         check_in: this.formatDate(merged.checkIn),
         check_out: this.formatDate(merged.checkOut),
         month: this.monthName(merged.checkIn),
@@ -1111,54 +1144,33 @@ export class MessageHandlerService {
     return ` for ${this.monthName(d)}`;
   }
 
-  private async trySendUnavailableWithAlternative(
-    from: string,
-    name: string,
-    checkIn: Date,
-    checkOut: Date,
-  ): Promise<boolean> {
-    let closest: Awaited<
-      ReturnType<HelpersService['findClosestAvailableWeek']>
-    > = null;
+  /**
+   * After the bot replies with a Sunday-to-Sunday (or min-stay) suggestion,
+   * overwrite the conversation's pendingDates with the SUGGESTED dates and
+   * mark lastIntent='awaiting_dates_confirmation'. That way, a short
+   * affirmative on the next turn ("yes please", "ok") routes through
+   * handleAvailability for the suggested week — not booking_confirmed_handoff
+   * and not the same not-Sunday template re-sent on the original off-week dates.
+   */
+  private async parkSuggestedDates(
+    phone: string,
+    suggestedCheckInIso: string,
+    suggestedCheckOutIso: string,
+  ): Promise<void> {
     try {
-      closest = await this.helpers.findClosestAvailableWeek(checkIn, 60);
+      await this.conversation.updateContext(phone, {
+        lastIntent: 'awaiting_dates_confirmation',
+        pendingDates: {
+          checkIn: suggestedCheckInIso,
+          checkOut: suggestedCheckOutIso,
+          guests: null,
+        },
+      });
     } catch (err) {
-      this.logger.warn('availability', 'closest-week lookup failed', {
-        from,
+      this.logger.warn('conversation', 'parkSuggestedDates failed', {
+        phone,
         error: (err as Error).message,
       });
-      return false;
-    }
-    if (!closest) return false;
-
-    let altQuote: Quote | null = null;
-    try {
-      altQuote = await this.pricing.calculate(closest.checkIn, closest.checkOut);
-    } catch (err) {
-      this.logger.warn('pricing', 'alt-week pricing failed', {
-        from,
-        error: (err as Error).message,
-      });
-      return false;
-    }
-
-    try {
-      await this.sendTemplate(from, 'availability_no_with_alternative', {
-        name,
-        check_in: this.formatDate(checkIn),
-        check_out: this.formatDate(checkOut),
-        month: this.monthName(checkIn),
-        alt_check_in: this.formatDate(closest.checkIn),
-        alt_check_out: this.formatDate(closest.checkOut),
-        alt_price: this.formatPrice(altQuote.total),
-      });
-      return true;
-    } catch (err) {
-      this.logger.warn('templates', 'alt-week template send failed', {
-        from,
-        error: (err as Error).message,
-      });
-      return false;
     }
   }
 
@@ -1193,7 +1205,7 @@ export class MessageHandlerService {
       case 'polite_close':
         return "The customer is winding down ('I'll think about it', 'cool that sounds nice', 'let me check with my partner'). Reply warmly with no pressure. IMPORTANT: if the recent history shows we've just listed availability or quoted a price, weave in a single short hold offer — e.g. 'happy to hold one of those weeks briefly while you decide'. If there's no recent quote/availability in history, just a warm acknowledgement is enough.";
       case 'month_query':
-        return "You're presenting availability (or lack of it) for a month or month range. After listing the available weeks, gently offer to hold one of them while the customer decides. If no weeks are available in the asked month, offer the nearest alternatives AND still mention that you can hold a week briefly.";
+        return "You're presenting availability (or lack of it) for a month or month range. STYLE RULES for this scenario (tight, punchy, NOT a sales pitch): one short sentence per period/week, split with full stops not commas. Do NOT chain clauses with commas like 'September is quieter and often still very warm, with the wine harvest gets going, and there are five weeks'. Instead: 'September is quieter and still very warm. The wine harvest is on, with local food and wine events. Five consecutive weeks free from 29 August at £3,995 each.' Drop filler phrases like 'full school holiday feel', 'real atmosphere', 'often still'. After the period summary, end with a single clear question to the guest, e.g. 'Which works best for you?' Do NOT also list every period if only one was asked about. Offer to hold a week briefly only if the guest has signalled interest.";
       case 'correction':
         return "The customer is correcting or pushing back on YOUR previous reply. Apologise briefly for the misunderstanding and ask what they'd like to know. Don't escalate.";
       case 'unclear':

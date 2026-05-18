@@ -463,7 +463,7 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
     );
   });
 
-  it('renders availability_no_handoff when dates are taken', async () => {
+  it('renders availability_no_priority when dates are taken', async () => {
     const parser = makeParser({
       intent: 'availability_inquiry',
       checkIn: SUN_CHECK_IN,
@@ -475,7 +475,7 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
 
     await handler.handle({ from: CUSTOMER, text: 'is Jul 6-13 free?' });
 
-    expect(templateCalls(templates)).toContain('availability_no_handoff');
+    expect(templateCalls(templates)).toContain('availability_no_priority');
   });
 
   it('appends the September wine-harvest note when check-in falls in September', async () => {
@@ -864,7 +864,7 @@ describe('MessageHandlerService.handle — hold flows', () => {
 
     await handler.handle({ from: CUSTOMER, text: 'are those dates free?' });
 
-    expect(templateCalls(templates)).toContain('availability_no_handoff');
+    expect(templateCalls(templates)).toContain('availability_no_priority');
     expect(availability.isRangeAvailable).not.toHaveBeenCalled();
   });
 

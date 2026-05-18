@@ -6,10 +6,20 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { FollowUpsCronService } from './follow-ups-cron.service';
 import { FollowUp, FollowUpsService } from './follow-ups.service';
 
-const makeConversation = () =>
+const makeConversation = (
+  candidates: Array<{
+    phone: string;
+    customerName: string | null;
+    checkIn: string;
+    checkOut: string;
+  }> = [],
+) =>
   ({
     markFollowUpSent: jest.fn().mockResolvedValue(undefined),
     setLifecycleStatus: jest.fn().mockResolvedValue(undefined),
+    listDateReconfirmationCandidates: jest.fn().mockResolvedValue(candidates),
+    markDateReconfirmationSent: jest.fn().mockResolvedValue(undefined),
+    updateContext: jest.fn().mockResolvedValue(undefined),
   }) as unknown as ConversationService;
 
 const makeLogger = () =>
@@ -113,6 +123,49 @@ describe('FollowUpsCronService', () => {
 
     expect(whatsapp.sendMessage).not.toHaveBeenCalled();
     expect(followUps.markSent24h).not.toHaveBeenCalled();
+  });
+
+  it('sends date_reconfirmation_check, parks dates, and marks sent for idle candidates', async () => {
+    const conversation = makeConversation([
+      {
+        phone: '447222',
+        customerName: 'Sam',
+        checkIn: '2027-08-08',
+        checkOut: '2027-08-15',
+      },
+    ]);
+    const response = makeResponse('reconfirm reply');
+    const whatsapp = makeWhatsapp();
+    const cron = new FollowUpsCronService(
+      makeFollowUps(),
+      whatsapp,
+      makeMessageLog(),
+      response,
+      conversation,
+      makeLogger(),
+    );
+
+    await cron.runDailyCheck();
+
+    expect(response.render).toHaveBeenCalledWith(
+      'date_reconfirmation_check',
+      expect.objectContaining({
+        name: 'Sam',
+        name_comma: ', Sam',
+        check_in: expect.stringContaining('August'),
+        check_out: expect.stringContaining('August'),
+      }),
+    );
+    expect(whatsapp.sendMessage).toHaveBeenCalledWith('447222', 'reconfirm reply');
+    expect(conversation.updateContext).toHaveBeenCalledWith('447222', {
+      lastIntent: 'awaiting_dates_confirmation',
+      pendingDates: {
+        checkIn: '2027-08-08',
+        checkOut: '2027-08-15',
+        guests: null,
+      },
+    });
+    expect(conversation.markDateReconfirmationSent).toHaveBeenCalledWith('447222');
   });
 
   it('skips the 24h step if ≥7d already elapsed and goes straight to 7d', async () => {

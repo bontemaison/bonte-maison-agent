@@ -9,6 +9,8 @@ import { FollowUp, FollowUpsService } from './follow-ups.service';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+const RECONFIRM_MIN_IDLE_DAYS = 3;
+const RECONFIRM_MAX_IDLE_DAYS = 14;
 
 @Injectable()
 export class FollowUpsCronService implements OnModuleInit, OnModuleDestroy {
@@ -51,6 +53,69 @@ export class FollowUpsCronService implements OnModuleInit, OnModuleDestroy {
         });
       }
     }
+
+    await this.runDateReconfirmationCheck();
+  }
+
+  /**
+   * Date reconfirmation (Jim 2026-05): if a customer asked about specific
+   * dates and has gone quiet for a few days, ping them once with the dates
+   * spelled out so they can either re-confirm (→ availability re-check via
+   * `awaiting_dates_confirmation` flow) or share new dates.
+   */
+  async runDateReconfirmationCheck(): Promise<void> {
+    const candidates = await this.conversation.listDateReconfirmationCandidates(
+      RECONFIRM_MIN_IDLE_DAYS,
+      RECONFIRM_MAX_IDLE_DAYS,
+    );
+    this.logger.info('follow-ups', 'date reconfirmation check', {
+      count: candidates.length,
+    });
+
+    for (const c of candidates) {
+      try {
+        const checkInLabel = this.formatIso(c.checkIn);
+        const checkOutLabel = this.formatIso(c.checkOut);
+        const text = await this.templates.render('date_reconfirmation_check', {
+          name: c.customerName ?? '',
+          name_comma: c.customerName ? `, ${c.customerName}` : '',
+          check_in: checkInLabel,
+          check_out: checkOutLabel,
+        });
+        await this.whatsapp.sendMessage(c.phone, text);
+        await this.messageLog.log(c.phone, 'out', text);
+        // Park the dates so a "yes please" reply runs availability for them.
+        await this.conversation.updateContext(c.phone, {
+          lastIntent: 'awaiting_dates_confirmation',
+          pendingDates: {
+            checkIn: c.checkIn,
+            checkOut: c.checkOut,
+            guests: null,
+          },
+        });
+        await this.conversation.markDateReconfirmationSent(c.phone);
+        this.logger.info('follow-ups', 'date reconfirmation sent', {
+          phone: c.phone,
+        });
+      } catch (err) {
+        this.logger.error('follow-ups', 'date reconfirmation send failed', {
+          phone: c.phone,
+          error: (err as Error).message,
+        });
+      }
+    }
+  }
+
+  private formatIso(iso: string): string {
+    const d = new Date(`${iso}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
   }
 
   private async processRow(row: FollowUp): Promise<void> {

@@ -117,34 +117,28 @@ const TEMPLATES: TemplateRow[] = [
     text: `Worth mentioning, September is wine harvest season here, so the whole area comes alive with tastings, markets and vineyard events.`,
   },
 
-  // availability_no_handoff — fallback when no nearby alternative is available
+  // availability_no_priority — week is reserved. Offer priority list (Typeform) and
+  // invite the guest to share flexibility. We deliberately don't volunteer a specific
+  // alternative upfront; if they have flexibility they'll come back and ask.
+  // Jim's exact tone, 2026-05.
+  // {name_comma} is either ", Sarah" or "" so we don't get "Hi ," when name unknown.
   {
-    key: 'availability_no_handoff',
+    key: 'availability_no_priority',
     variant: 1,
-    text: `Thanks for thinking of us.\n\nUnfortunately {check_in} to {check_out} is already reserved, {month} tends to book up early.\n\nI'll get back to you shortly with what we have around those dates.\n\nMany thanks`,
+    text: `Hi{name_comma}, thanks for your message.\n\n{check_in} to {check_out} is already reserved I'm afraid, it's one of the most popular times and tends to be secured well in advance.\n\nWhat I can do is give you first priority if anything changes. We do occasionally have cancellations, and I'll let you know straight away before it's offered more widely.\n\nIf you'd like to be included, you can register your details here:\nwww.bontemaison.com/priority\n\nAnd if you have any flexibility on dates, I'd be very happy to suggest the closest options that are currently available.\n\nMany thanks`,
   },
   {
-    key: 'availability_no_handoff',
+    key: 'availability_no_priority',
     variant: 2,
-    text: `Appreciate you coming back to me.\n\nThat week is already reserved I'm afraid.\n\nLet me have a look at what we have close to your dates and I'll come back to you shortly.\n\nMany thanks`,
-  },
-  {
-    key: 'availability_no_handoff',
-    variant: 3,
-    text: `Thanks for the message.\n\n{check_in} to {check_out} is already reserved, {month} is one of our busier times here.\n\nI'll come back to you shortly with what's still around.\n\nMany thanks`,
+    text: `Thanks for getting in touch.\n\nThat particular week is already reserved I'm afraid, {month} tends to book up early.\n\nWhat I can do is keep you first in line if anything changes. We do occasionally see cancellations, and I'll let you know straight away before the week goes back out more widely.\n\nIf you'd like to be added, register your details here:\nwww.bontemaison.com/priority\n\nIf you have any flexibility on dates, I'd be very happy to share what's still open close to your week.\n\nMany thanks`,
   },
 
-  // availability_no_with_alternative — asked week reserved, but a nearby week is open.
-  // Offer the alternative + hold, no Jim handoff needed.
+  // availability_no_handoff — legacy key, kept for backward compat with any
+  // direct references. Routes the same priority-list reply as v1 above.
   {
-    key: 'availability_no_with_alternative',
+    key: 'availability_no_handoff',
     variant: 1,
-    text: `Thank you for your message.\n\n{check_in} to {check_out} is already reserved, {month} tends to book up early.\n\nThe nearest available week is {alt_check_in} to {alt_check_out}, at {alt_price} for the 7 nights with exclusive use of the villa.\n\nIf that could work, I'd be happy to hold it for a short time while you consider.\n\nMany thanks`,
-  },
-  {
-    key: 'availability_no_with_alternative',
-    variant: 2,
-    text: `Thanks for getting in touch.\n\n{check_in} to {check_out} is already reserved — {month} is one of our busiest periods. The closest week still open is {alt_check_in} to {alt_check_out}, at {alt_price} for 7 nights, the villa reserved exclusively for your group.\n\nIf you have any flexibility, I can hold that week briefly while you decide.\n\nMany thanks`,
+    text: `Hi{name_comma}, thanks for your message.\n\n{check_in} to {check_out} is already reserved I'm afraid, it's one of the most popular times and tends to be secured well in advance.\n\nWhat I can do is give you first priority if anything changes. We do occasionally have cancellations, and I'll let you know straight away before it's offered more widely.\n\nIf you'd like to be included, you can register your details here:\nwww.bontemaison.com/priority\n\nAnd if you have any flexibility on dates, I'd be very happy to suggest the closest options that are currently available.\n\nMany thanks`,
   },
 
   // availability_subject_to_confirmation
@@ -275,11 +269,11 @@ const TEMPLATES: TemplateRow[] = [
 
   // ── 6. SPECIAL CASES ──────────────────────────────────────────────────
 
-  // year_2026_redirect — {month_phrase} is either "" or " for August" (orchestrator provides leading space)
+  // year_2026_redirect — {month_phrase} is either "" or " for June" (orchestrator provides leading space, no trailing comma)
   {
     key: 'year_2026_redirect',
     variant: 1,
-    text: `Thanks for getting in touch.\n\n2026 is fully booked{month_phrase}, I'm afraid, it went very quickly this year. I do have some lovely weeks still available in 2027 if you'd like to look at dates there.\n\nMany thanks`,
+    text: `Thanks for getting in touch.\n\n2026 is fully booked{month_phrase} I'm afraid, it went very quickly this year. I do have some lovely weeks still available in 2027 if you'd like to look at dates there.\n\nMany thanks`,
   },
   {
     key: 'year_2026_redirect',
@@ -324,6 +318,19 @@ const TEMPLATES: TemplateRow[] = [
     key: 'followup_24h',
     variant: 1,
     text: `Just a quick note as I know plans can take a bit of coordinating.\n\nThose dates are still available at the moment. If it helps, I'm very happy to pencil them in for you while you have a think.\n\nHappy to help if you have any questions at all.\n\nMany thanks`,
+  },
+
+  // date_reconfirmation_check — Jim 2026-05: prompted customer to confirm they're
+  // still interested in their previously-requested dates after a few days of silence.
+  {
+    key: 'date_reconfirmation_check',
+    variant: 1,
+    text: `Hi{name_comma}, just checking back in.\n\nAre you still looking at {check_in} to {check_out}? Happy to re-check availability if so, or if dates have shifted let me know your new preference and I'll come back to you.\n\nMany thanks`,
+  },
+  {
+    key: 'date_reconfirmation_check',
+    variant: 2,
+    text: `Just a quick note{name_comma}.\n\nLast time we spoke you were looking at {check_in} to {check_out}. Are you still considering those dates? If so I'll re-check availability, or if you've shifted, just let me know the new week.\n\nMany thanks`,
   },
   {
     key: 'followup_7d',

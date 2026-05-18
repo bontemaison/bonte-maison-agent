@@ -44,10 +44,14 @@ export const FEEDBACK_CRITERIA: Criterion[] = [
   },
   {
     customerMessage: 'Week starting the 8th aug',
-    mustInclude: [/29 (august|aug)/i, /hold/i, /www\.bontemaison\.com/i],
-    mustNotInclude: [/€/, /^\s*That week is already reserved\.?\s*Many thanks/i],
+    mustInclude: [/reserved/i, /priority/i, /bontemaison\.com\/priority/i],
+    mustNotInclude: [
+      /€/,
+      /^\s*That week is already reserved\.?\s*Many thanks/i,
+      /exclusive use of the villa/i,
+    ],
     notes:
-      'Specific unavailable week: do not just say "reserved" — offer nearest alternative + hold.',
+      'Specific unavailable week (Jim 2026-05): give priority-list link, no auto-alternative, no "exclusive use of the villa".',
   },
   {
     customerMessage: 'Ok when is free ?',

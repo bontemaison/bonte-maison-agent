@@ -220,6 +220,7 @@ Write failing test → minimal code → refactor → move on.
 - `follow_up_count` (number)
 - `follow_up_24h_sent` (checkbox)
 - `follow_up_7d_sent` (checkbox)
+- `date_reconfirmation_sent` (checkbox) — set when the date-reconfirmation cron pings a customer about their `dates_requested`. One-shot.
 - `enquiry_source` (string)
 - `notes` (long text — Jim's manual notes)
 

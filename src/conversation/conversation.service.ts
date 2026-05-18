@@ -61,8 +61,16 @@ type ConversationFields = {
   follow_up_count?: number;
   follow_up_24h_sent?: boolean;
   follow_up_7d_sent?: boolean;
+  date_reconfirmation_sent?: boolean;
   enquiry_source?: string;
   notes?: string;
+};
+
+export type DateReconfirmationCandidate = {
+  phone: string;
+  customerName: string | null;
+  checkIn: string;
+  checkOut: string;
 };
 
 type BookingRulesFields = {
@@ -258,6 +266,69 @@ export class ConversationService {
       email,
       last_activity: new Date().toISOString(),
     });
+  }
+
+  /**
+   * Conversations the date-reconfirmation cron should ping. A row qualifies when:
+   *   - the bot is still in control (pause_status='bot'),
+   *   - the lifecycle hasn't already booked or been written off,
+   *   - we have stored dates_requested in the `YYYY-MM-DD → YYYY-MM-DD` format,
+   *   - last_activity is between minIdleDays and maxIdleDays ago, and
+   *   - we haven't already sent the reconfirmation.
+   */
+  async listDateReconfirmationCandidates(
+    minIdleDays: number,
+    maxIdleDays: number,
+  ): Promise<DateReconfirmationCandidate[]> {
+    const rows = await this.airtable.list<ConversationFields>('Conversations', {});
+    const now = Date.now();
+    const minIdleMs = minIdleDays * 24 * 60 * 60 * 1000;
+    const maxIdleMs = maxIdleDays * 24 * 60 * 60 * 1000;
+    const candidates: DateReconfirmationCandidate[] = [];
+
+    for (const row of rows) {
+      const f = row.fields;
+      const status = f.pause_status ?? 'bot';
+      if (status !== 'bot') continue;
+      if (f.status === 'Booked' || f.status === 'Lost') continue;
+      if (f.date_reconfirmation_sent === true) continue;
+      const phone = f.phone?.trim();
+      if (!phone) continue;
+      const lastActivityMs = f.last_activity
+        ? new Date(f.last_activity).getTime()
+        : null;
+      if (lastActivityMs === null || Number.isNaN(lastActivityMs)) continue;
+      const elapsed = now - lastActivityMs;
+      if (elapsed < minIdleMs || elapsed > maxIdleMs) continue;
+
+      const parsed = this.parseDatesRequested(f.dates_requested);
+      if (!parsed) continue;
+
+      candidates.push({
+        phone,
+        customerName: f.customer_name?.trim() ? f.customer_name.trim() : null,
+        checkIn: parsed.checkIn,
+        checkOut: parsed.checkOut,
+      });
+    }
+    return candidates;
+  }
+
+  async markDateReconfirmationSent(phone: string): Promise<void> {
+    await this.upsert(phone, {
+      phone,
+      date_reconfirmation_sent: true,
+      last_activity: new Date().toISOString(),
+    });
+  }
+
+  private parseDatesRequested(
+    value: string | undefined,
+  ): { checkIn: string; checkOut: string } | null {
+    if (!value) return null;
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})\s*[→\-]>?\s*(\d{4}-\d{2}-\d{2})/);
+    if (!match) return null;
+    return { checkIn: match[1], checkOut: match[2] };
   }
 
   async markFollowUpSent(phone: string, stage: '24h' | '7d'): Promise<void> {
