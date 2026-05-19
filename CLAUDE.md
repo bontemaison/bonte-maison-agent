@@ -253,19 +253,46 @@ Simple key-value config for rules that change:
 - `value`
 - `active`
 
-Recognised keys (string values, `"true"` / `"false"`):
-- `year_2026_fully_booked` — when `true`, 2026 dates trigger the redirect
-  template. Read by `BookingRulesService` on every validation.
-- `instant_book_enabled` — when `true`, booking-confirmation replies use the
-  instant-book variant. Read by `MessageHandlerService` via
+Recognised keys:
+- `year_2026_fully_booked` (`"true"` / `"false"`) — when `true`, 2026 dates
+  trigger the redirect template. Read by `BookingRulesService` on every
+  validation.
+- `instant_book_enabled` (`"true"` / `"false"`) — when `true`, booking-
+  confirmation replies use the instant-book variant. Read via
   `BookingRulesService.isInstantBookEnabled()`.
-- `bot_paused_global` — global kill-switch. When `"true"`,
-  `ConversationService.canSendBot` returns false for every phone, so no
-  template is sent and no composer reply is dispatched. Inbound messages are
-  still logged. Toggled via `/pause` and `/resume` from `OWNER_PHONE` (no
+- `bot_paused_global` (`"true"` / `"false"`) — global kill-switch. When
+  `"true"`, `ConversationService.canSendBot` returns false for every phone,
+  so no template is sent and no composer reply is dispatched. Inbound messages
+  are still logged. Toggled via `/pause` and `/resume` from `OWNER_PHONE` (no
   argument), or by editing the row directly in Airtable.
+- `owner_notify_phone_enabled` (`"true"` / `"false"`) — when `true`, owner
+  WhatsApp notifications fire to the `OWNER_PHONE` env recipient. Set to
+  `false` to silence WA pings without removing the env var. Defaults to
+  enabled if the row is missing.
+- `owner_notify_email_enabled` (`"true"` / `"false"`) — same shape for email
+  notifications (recipient is `OWNER_EMAIL` env). Defaults to enabled.
 
-All three flags can be flipped in Airtable without a redeploy.
+All keys can be flipped in Airtable without a redeploy. Run
+`npm run seed:booking-rules` to create any missing rows with safe defaults
+(existing values are preserved).
+
+### Owner WhatsApp notification template
+Owner WhatsApp notifications go through `sendTemplate` (HSM), not
+`sendMessage`. This is because Jim might not have messaged the bot recently —
+session sends fail outside the WhatsApp 24-hour customer-service window.
+
+The template name lives in `OWNER_WHATSAPP_TEMPLATE`. The template must be
+pre-approved at the WhatsApp provider (Wati/Meta) and accept a single body
+parameter `{{1}}` that carries the full notification text. Example body:
+
+```
+🔔 Bonté Maison alert
+
+{{1}}
+```
+
+If `OWNER_WHATSAPP_TEMPLATE` is unset, WhatsApp delivery is skipped (with a
+warning) — email still fires if configured.
 
 ### Owner commands
 Sent from `OWNER_PHONE` to the business number. Messages from any other
@@ -318,8 +345,11 @@ ICAL_URL=https://ical.promotemyplace.com/4ee2e6e0bce533ec4edd08202ce80eb9/calend
 
 # Owner notifications (Phase 5)
 # Both channels are optional; notifications fire on every channel that is set.
-OWNER_PHONE=        # WhatsApp recipient + identifies owner for /pause /release /resume /status commands
-OWNER_EMAIL=        # SMTP recipient (optional)
+# Each channel can also be overridden in Airtable BookingRules
+# (owner_notify_phone / owner_notify_email) — env values here are the fallback.
+OWNER_PHONE=                # default WhatsApp recipient + identifies owner for /pause /release /resume /status commands
+OWNER_EMAIL=                # default SMTP recipient
+OWNER_WHATSAPP_TEMPLATE=    # pre-approved WhatsApp template name (HSM) used for owner WA pings — required for outside-24h delivery
 
 # SMTP — only required if OWNER_EMAIL is set
 SMTP_HOST=

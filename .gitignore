@@ -58,4 +58,6 @@ pnpm-lock.yaml
 /.history
 
 .env
+.env.*
+!.env.example
 .claude/

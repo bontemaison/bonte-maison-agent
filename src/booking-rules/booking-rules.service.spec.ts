@@ -228,6 +228,44 @@ describe('BookingRulesService', () => {
     });
   });
 
+  describe('owner notification enable flags', () => {
+    it('returns true when owner_notify_phone_enabled=true', async () => {
+      const svc = makeService({ owner_notify_phone_enabled: 'true' });
+      expect(await svc.isOwnerPhoneNotifyEnabled()).toBe(true);
+    });
+
+    it('returns false when owner_notify_phone_enabled=false', async () => {
+      const svc = makeService({ owner_notify_phone_enabled: 'false' });
+      expect(await svc.isOwnerPhoneNotifyEnabled()).toBe(false);
+    });
+
+    it('returns true when owner_notify_email_enabled=true', async () => {
+      const svc = makeService({ owner_notify_email_enabled: 'true' });
+      expect(await svc.isOwnerEmailNotifyEnabled()).toBe(true);
+    });
+
+    it('returns false when owner_notify_email_enabled=false', async () => {
+      const svc = makeService({ owner_notify_email_enabled: 'false' });
+      expect(await svc.isOwnerEmailNotifyEnabled()).toBe(false);
+    });
+
+    it('defaults to true when the flag row is missing (preserves existing behaviour pre-seed)', async () => {
+      const svc = makeService();
+      expect(await svc.isOwnerPhoneNotifyEnabled()).toBe(true);
+      expect(await svc.isOwnerEmailNotifyEnabled()).toBe(true);
+    });
+
+    it('defaults to true and warns when the read fails', async () => {
+      const logger = makeLogger();
+      const airtable = {
+        list: jest.fn().mockRejectedValue(new Error('boom')),
+      } as unknown as AirtableService;
+      const svc = new BookingRulesService(airtable, logger);
+      expect(await svc.isOwnerPhoneNotifyEnabled()).toBe(true);
+      expect(logger.warn).toHaveBeenCalled();
+    });
+  });
+
   describe('Airtable failure', () => {
     it('treats flag as false and warns when the read fails', async () => {
       const logger = makeLogger();

@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { BookingRulesService } from '../booking-rules/booking-rules.service';
 import {
   ConversationService,
   CrmSnapshot,
@@ -16,9 +17,13 @@ const makeLogger = (): LoggerService =>
     error: jest.fn(),
   }) as unknown as LoggerService;
 
-const makeWhatsapp = (impl?: jest.Mock): WhatsappService =>
+const makeWhatsapp = (
+  templateImpl?: jest.Mock,
+  messageImpl?: jest.Mock,
+): WhatsappService =>
   ({
-    sendMessage: impl ?? jest.fn().mockResolvedValue(undefined),
+    sendMessage: messageImpl ?? jest.fn().mockResolvedValue(undefined),
+    sendTemplate: templateImpl ?? jest.fn().mockResolvedValue(undefined),
   }) as unknown as WhatsappService;
 
 const makeEmail = (impl?: jest.Mock): EmailService =>
@@ -27,12 +32,26 @@ const makeEmail = (impl?: jest.Mock): EmailService =>
     send: impl ?? jest.fn().mockResolvedValue(undefined),
   }) as unknown as EmailService;
 
+const DEFAULT_CONFIG = { OWNER_WHATSAPP_TEMPLATE: 'owner_notification' };
+
 const makeConfig = (
   values: Record<string, string | undefined>,
 ): ConfigService =>
   ({
-    get: (key: string) => values[key],
+    get: (key: string) => ({ ...DEFAULT_CONFIG, ...values })[key],
   }) as unknown as ConfigService;
+
+const makeBookingRules = (
+  overrides: { phoneEnabled?: boolean; emailEnabled?: boolean } = {},
+): BookingRulesService =>
+  ({
+    isOwnerPhoneNotifyEnabled: jest
+      .fn()
+      .mockResolvedValue(overrides.phoneEnabled ?? true),
+    isOwnerEmailNotifyEnabled: jest
+      .fn()
+      .mockResolvedValue(overrides.emailEnabled ?? true),
+  }) as unknown as BookingRulesService;
 
 const makeConversation = (
   snapshot: CrmSnapshot | null = null,
@@ -42,7 +61,7 @@ const makeConversation = (
   }) as unknown as ConversationService;
 
 describe('NotificationsService', () => {
-  it('sends to both WhatsApp and email when both are configured', async () => {
+  it('sends to both WhatsApp (via template) and email when both are configured', async () => {
     const whatsapp = makeWhatsapp();
     const email = makeEmail();
     const svc = new NotificationsService(
@@ -50,6 +69,7 @@ describe('NotificationsService', () => {
       whatsapp,
       email,
       makeConversation(),
+      makeBookingRules(),
       makeLogger(),
     );
 
@@ -59,11 +79,13 @@ describe('NotificationsService', () => {
       message: 'any chance of 10% off?',
     });
 
-    expect(whatsapp.sendMessage).toHaveBeenCalledWith(
+    expect(whatsapp.sendTemplate).toHaveBeenCalledWith(
       '447000',
-      'discount asked',
+      'owner_notification',
+      { '1': 'discount asked' },
       { override: true },
     );
+    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
     expect(email.send).toHaveBeenCalledWith(
       expect.objectContaining({
         to: 'jim@example.com',
@@ -73,7 +95,43 @@ describe('NotificationsService', () => {
     );
   });
 
-  it('skips WhatsApp when OWNER_PHONE not set', async () => {
+  it('skips WhatsApp when owner_notify_phone_enabled is false (email still fires)', async () => {
+    const whatsapp = makeWhatsapp();
+    const email = makeEmail();
+    const svc = new NotificationsService(
+      makeConfig({ OWNER_PHONE: '447000', OWNER_EMAIL: 'jim@example.com' }),
+      whatsapp,
+      email,
+      makeConversation(),
+      makeBookingRules({ phoneEnabled: false }),
+      makeLogger(),
+    );
+
+    await svc.notifyOwner('hi');
+
+    expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
+    expect(email.send).toHaveBeenCalled();
+  });
+
+  it('skips email when owner_notify_email_enabled is false (WhatsApp still fires)', async () => {
+    const whatsapp = makeWhatsapp();
+    const email = makeEmail();
+    const svc = new NotificationsService(
+      makeConfig({ OWNER_PHONE: '447000', OWNER_EMAIL: 'jim@example.com' }),
+      whatsapp,
+      email,
+      makeConversation(),
+      makeBookingRules({ emailEnabled: false }),
+      makeLogger(),
+    );
+
+    await svc.notifyOwner('hi');
+
+    expect(whatsapp.sendTemplate).toHaveBeenCalled();
+    expect(email.send).not.toHaveBeenCalled();
+  });
+
+  it('skips WhatsApp when OWNER_PHONE env is not set', async () => {
     const whatsapp = makeWhatsapp();
     const email = makeEmail();
     const svc = new NotificationsService(
@@ -81,16 +139,17 @@ describe('NotificationsService', () => {
       whatsapp,
       email,
       makeConversation(),
+      makeBookingRules(),
       makeLogger(),
     );
 
     await svc.notifyOwner('hi');
 
-    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+    expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
     expect(email.send).toHaveBeenCalled();
   });
 
-  it('skips email when OWNER_EMAIL not set', async () => {
+  it('skips email when OWNER_EMAIL env is not set', async () => {
     const whatsapp = makeWhatsapp();
     const email = makeEmail();
     const svc = new NotificationsService(
@@ -98,13 +157,36 @@ describe('NotificationsService', () => {
       whatsapp,
       email,
       makeConversation(),
+      makeBookingRules(),
       makeLogger(),
     );
 
     await svc.notifyOwner('hi');
 
-    expect(whatsapp.sendMessage).toHaveBeenCalled();
+    expect(whatsapp.sendTemplate).toHaveBeenCalled();
     expect(email.send).not.toHaveBeenCalled();
+  });
+
+  it('skips WhatsApp when OWNER_WHATSAPP_TEMPLATE is not configured', async () => {
+    const whatsapp = makeWhatsapp();
+    const logger = makeLogger();
+    const svc = new NotificationsService(
+      makeConfig({ OWNER_PHONE: '447000', OWNER_WHATSAPP_TEMPLATE: undefined }),
+      whatsapp,
+      makeEmail(),
+      makeConversation(),
+      makeBookingRules(),
+      logger,
+    );
+
+    await svc.notifyOwner('hi');
+
+    expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
+    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      'notifications',
+      'OWNER_WHATSAPP_TEMPLATE not configured; skipping WhatsApp delivery',
+    );
   });
 
   it('does nothing when neither channel is configured', async () => {
@@ -115,12 +197,13 @@ describe('NotificationsService', () => {
       whatsapp,
       email,
       makeConversation(),
+      makeBookingRules(),
       makeLogger(),
     );
 
     await svc.notifyOwner('hi');
 
-    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+    expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
     expect(email.send).not.toHaveBeenCalled();
   });
 
@@ -135,6 +218,7 @@ describe('NotificationsService', () => {
       whatsapp,
       email,
       makeConversation(),
+      makeBookingRules(),
       logger,
     );
 
@@ -158,14 +242,48 @@ describe('NotificationsService', () => {
       whatsapp,
       email,
       makeConversation(),
+      makeBookingRules(),
       logger,
     );
 
     await expect(svc.notifyOwner('hi')).resolves.toBeUndefined();
-    expect(whatsapp.sendMessage).toHaveBeenCalled();
+    expect(whatsapp.sendTemplate).toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
       'notifications',
       'email delivery failed',
+      expect.any(Object),
+    );
+  });
+
+  it('defaults to enabled and warns when the enable-flag read throws', async () => {
+    const whatsapp = makeWhatsapp();
+    const bookingRules = {
+      isOwnerPhoneNotifyEnabled: jest
+        .fn()
+        .mockRejectedValue(new Error('airtable down')),
+      isOwnerEmailNotifyEnabled: jest.fn().mockResolvedValue(true),
+    } as unknown as BookingRulesService;
+    const logger = makeLogger();
+    const svc = new NotificationsService(
+      makeConfig({ OWNER_PHONE: '447000' }),
+      whatsapp,
+      makeEmail(),
+      makeConversation(),
+      bookingRules,
+      logger,
+    );
+
+    await svc.notifyOwner('hi');
+
+    expect(whatsapp.sendTemplate).toHaveBeenCalledWith(
+      '447000',
+      'owner_notification',
+      { '1': 'hi' },
+      { override: true },
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      'notifications',
+      'phone-enable flag read failed; defaulting to enabled',
       expect.any(Object),
     );
   });
@@ -177,6 +295,7 @@ describe('NotificationsService', () => {
       makeWhatsapp(),
       email,
       makeConversation(),
+      makeBookingRules(),
       makeLogger(),
     );
 
@@ -215,6 +334,7 @@ describe('NotificationsService', () => {
         whatsapp,
         email,
         makeConversation(snapshot),
+        makeBookingRules(),
         makeLogger(),
       );
 
@@ -222,7 +342,7 @@ describe('NotificationsService', () => {
         message: 'any chance of a discount?',
       });
 
-      const waText = (whatsapp.sendMessage as jest.Mock).mock.calls[0][1];
+      const waText = (whatsapp.sendTemplate as jest.Mock).mock.calls[0][2]['1'];
       expect(waText).toContain('Discount request');
       expect(waText).toContain('Sarah Jenkins (447111)');
       expect(waText).toContain('Status: Responded');
@@ -244,12 +364,13 @@ describe('NotificationsService', () => {
         whatsapp,
         makeEmail(),
         makeConversation(null),
+        makeBookingRules(),
         makeLogger(),
       );
 
       await svc.notifyOwnerAboutConversation('447111', 'unclear_or_off_topic');
 
-      const waText = (whatsapp.sendMessage as jest.Mock).mock.calls[0][1];
+      const waText = (whatsapp.sendTemplate as jest.Mock).mock.calls[0][2]['1'];
       expect(waText).toContain('Guest: 447111');
       expect(waText).toContain('Unclear / off-topic');
     });
@@ -265,12 +386,13 @@ describe('NotificationsService', () => {
         whatsapp,
         makeEmail(),
         conversation,
+        makeBookingRules(),
         logger,
       );
 
       await svc.notifyOwnerAboutConversation('447111', 'discount_request');
 
-      expect(whatsapp.sendMessage).toHaveBeenCalled();
+      expect(whatsapp.sendTemplate).toHaveBeenCalled();
       expect(logger.warn).toHaveBeenCalledWith(
         'notifications',
         'CRM snapshot fetch failed',

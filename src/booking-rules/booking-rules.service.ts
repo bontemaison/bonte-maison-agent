@@ -10,6 +10,8 @@ const LONG_STAY_MONTHS = new Set([9, 10, 11, 0, 1, 2, 3, 4]);
 
 const YEAR_2026_FULLY_BOOKED_KEY = 'year_2026_fully_booked';
 const INSTANT_BOOK_ENABLED_KEY = 'instant_book_enabled';
+const OWNER_NOTIFY_PHONE_ENABLED_KEY = 'owner_notify_phone_enabled';
+const OWNER_NOTIFY_EMAIL_ENABLED_KEY = 'owner_notify_email_enabled';
 
 type BookingRulesFields = {
   key?: string;
@@ -101,7 +103,27 @@ export class BookingRulesService {
     return this.getBooleanFlag(INSTANT_BOOK_ENABLED_KEY);
   }
 
-  private async getBooleanFlag(key: string): Promise<boolean> {
+  /**
+   * Whether owner WhatsApp notifications are enabled. Defaults to true when
+   * the row is missing so the env-configured OWNER_PHONE keeps receiving
+   * notifications without requiring the seed script to have been run.
+   */
+  async isOwnerPhoneNotifyEnabled(): Promise<boolean> {
+    return this.getBooleanFlag(OWNER_NOTIFY_PHONE_ENABLED_KEY, true);
+  }
+
+  /**
+   * Whether owner email notifications are enabled. Defaults to true when the
+   * row is missing.
+   */
+  async isOwnerEmailNotifyEnabled(): Promise<boolean> {
+    return this.getBooleanFlag(OWNER_NOTIFY_EMAIL_ENABLED_KEY, true);
+  }
+
+  private async getBooleanFlag(
+    key: string,
+    defaultValue: boolean = false,
+  ): Promise<boolean> {
     try {
       const rows = await this.airtable.list<BookingRulesFields>(
         'BookingRules',
@@ -110,13 +132,16 @@ export class BookingRulesService {
           maxRecords: 1,
         },
       );
-      return this.parseBooleanValue(rows[0]?.fields.value);
+      const raw = rows[0]?.fields.value;
+      if (raw === undefined || raw === null || raw === '') return defaultValue;
+      return this.parseBooleanValue(raw);
     } catch (err) {
-      this.logger.warn('booking-rules', 'flag read failed; defaulting to false', {
+      this.logger.warn('booking-rules', 'flag read failed; using default', {
         key,
+        defaultValue,
         error: (err as Error).message,
       });
-      return false;
+      return defaultValue;
     }
   }
 

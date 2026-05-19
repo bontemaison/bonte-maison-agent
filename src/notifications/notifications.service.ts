@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { BookingRulesService } from '../booking-rules/booking-rules.service';
 import {
   ConversationService,
   CrmSnapshot,
@@ -40,16 +41,19 @@ const REASON_LABELS: Record<string, string> = {
 export class NotificationsService {
   private readonly ownerPhone: string | undefined;
   private readonly ownerEmail: string | undefined;
+  private readonly ownerWhatsappTemplate: string | undefined;
 
   constructor(
     config: ConfigService,
     private readonly whatsapp: WhatsappService,
     private readonly email: EmailService,
     private readonly conversation: ConversationService,
+    private readonly bookingRules: BookingRulesService,
     private readonly logger: LoggerService,
   ) {
     this.ownerPhone = config.get<string>('OWNER_PHONE');
     this.ownerEmail = config.get<string>('OWNER_EMAIL');
+    this.ownerWhatsappTemplate = config.get<string>('OWNER_WHATSAPP_TEMPLATE');
   }
 
   /**
@@ -89,16 +93,61 @@ export class NotificationsService {
     subject: string,
     body: string,
   ): Promise<void> {
-    await Promise.allSettled([
-      this.sendWhatsapp(whatsappText),
-      this.sendEmail(subject, body),
+    const [phoneEnabled, emailEnabled] = await Promise.all([
+      this.isPhoneEnabled(),
+      this.isEmailEnabled(),
     ]);
+    await Promise.allSettled([
+      phoneEnabled ? this.sendWhatsapp(whatsappText) : Promise.resolve(),
+      emailEnabled ? this.sendEmail(subject, body) : Promise.resolve(),
+    ]);
+  }
+
+  private async isPhoneEnabled(): Promise<boolean> {
+    try {
+      return await this.bookingRules.isOwnerPhoneNotifyEnabled();
+    } catch (err) {
+      this.logger.warn(
+        'notifications',
+        'phone-enable flag read failed; defaulting to enabled',
+        { error: (err as Error).message },
+      );
+      return true;
+    }
+  }
+
+  private async isEmailEnabled(): Promise<boolean> {
+    try {
+      return await this.bookingRules.isOwnerEmailNotifyEnabled();
+    } catch (err) {
+      this.logger.warn(
+        'notifications',
+        'email-enable flag read failed; defaulting to enabled',
+        { error: (err as Error).message },
+      );
+      return true;
+    }
   }
 
   private async sendWhatsapp(text: string): Promise<void> {
     if (!this.ownerPhone) return;
+    if (!this.ownerWhatsappTemplate) {
+      // Without a pre-approved template name we can't reliably reach Jim
+      // outside the 24h customer-service window, so don't fall back to a
+      // session send — it would silently fail when stale.
+      this.logger.warn(
+        'notifications',
+        'OWNER_WHATSAPP_TEMPLATE not configured; skipping WhatsApp delivery',
+      );
+      return;
+    }
     try {
-      await this.whatsapp.sendMessage(this.ownerPhone, text, { override: true });
+      await this.whatsapp.sendTemplate(
+        this.ownerPhone,
+        this.ownerWhatsappTemplate,
+        { '1': text },
+        { override: true },
+      );
     } catch (err) {
       this.logger.error('notifications', 'whatsapp delivery failed', {
         error: (err as Error).message,
