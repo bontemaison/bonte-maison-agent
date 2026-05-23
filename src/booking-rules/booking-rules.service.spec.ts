@@ -278,6 +278,74 @@ describe('BookingRulesService', () => {
     });
   });
 
+  describe('Coexistence heartbeat timestamps', () => {
+    const ISO = '2026-05-23T12:00:00.000Z';
+
+    it('returns null when last_owner_echo_at row is missing', async () => {
+      const svc = makeService();
+      expect(await svc.getLastOwnerEchoAt()).toBeNull();
+    });
+
+    it('parses last_owner_echo_at when set', async () => {
+      const svc = makeService({ last_owner_echo_at: ISO });
+      const result = await svc.getLastOwnerEchoAt();
+      expect(result?.toISOString()).toBe(ISO);
+    });
+
+    it('returns null when the stored value is unparseable', async () => {
+      const svc = makeService({ last_owner_echo_at: 'not-a-date' });
+      expect(await svc.getLastOwnerEchoAt()).toBeNull();
+    });
+
+    it('updates the existing row on recordOwnerEchoSeen when present', async () => {
+      const list = jest.fn().mockResolvedValue([
+        { id: 'rec-1', fields: { key: 'last_owner_echo_at', value: 'old', active: true } },
+      ]);
+      const update = jest.fn().mockResolvedValue({ id: 'rec-1', fields: {} });
+      const create = jest.fn();
+      const airtable = { list, update, create } as unknown as AirtableService;
+      const svc = new BookingRulesService(airtable, makeLogger());
+
+      const now = new Date(ISO);
+      await svc.recordOwnerEchoSeen(now);
+
+      expect(update).toHaveBeenCalledWith('BookingRules', 'rec-1', { value: ISO });
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it('creates the row on recordOwnerEchoSeen when absent', async () => {
+      const list = jest.fn().mockResolvedValue([]);
+      const update = jest.fn();
+      const create = jest.fn().mockResolvedValue({ id: 'rec-new', fields: {} });
+      const airtable = { list, update, create } as unknown as AirtableService;
+      const svc = new BookingRulesService(airtable, makeLogger());
+
+      await svc.recordOwnerEchoSeen(new Date(ISO));
+
+      expect(create).toHaveBeenCalledWith('BookingRules', {
+        key: 'last_owner_echo_at',
+        value: ISO,
+        active: true,
+      });
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it('swallows write failures rather than throwing to callers', async () => {
+      const list = jest.fn().mockRejectedValue(new Error('boom'));
+      const airtable = { list } as unknown as AirtableService;
+      const svc = new BookingRulesService(airtable, makeLogger());
+
+      await expect(svc.recordOwnerEchoSeen(new Date())).resolves.toBeUndefined();
+      await expect(svc.markHeartbeatWarningSent(new Date())).resolves.toBeUndefined();
+    });
+
+    it('round-trips markHeartbeatWarningSent / getHeartbeatWarningSentAt', async () => {
+      const svc = makeService({ heartbeat_warning_sent_at: ISO });
+      const result = await svc.getHeartbeatWarningSentAt();
+      expect(result?.toISOString()).toBe(ISO);
+    });
+  });
+
   // Keep references to suppress unused warnings in case linters get strict.
   void SUN_2025_09_07;
 });

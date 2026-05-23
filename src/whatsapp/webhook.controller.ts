@@ -78,8 +78,17 @@ export class WebhookController {
     };
 
     if (!this.whatsapp.validateWebhookSignature(raw, headers)) {
+      const debug = this.whatsapp.debugSignature(raw, headers);
       this.logger.warn('whatsapp', 'dropping webhook: invalid signature', {
         hasSignature: Boolean(sig256 ?? watiToken),
+        ...(debug ?? {}),
+        // Body preview helps confirm we're hashing what was actually
+        // delivered (e.g. no proxy re-encoding). Trim to keep logs sane.
+        bodyPreview: raw.subarray(0, 200).toString('utf8'),
+        // Full header dump: BSPs sometimes co-sign with a custom header
+        // (e.g. x-dualhook-signature) using a secret they DO share. Surfacing
+        // every header here makes that easy to spot.
+        allHeaders: req.headers,
       });
       return { status: 'ok' };
     }

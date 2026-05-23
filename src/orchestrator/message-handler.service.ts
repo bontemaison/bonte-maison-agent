@@ -96,6 +96,17 @@ export class MessageHandlerService {
         error: (err as Error).message,
       });
     }
+
+    // Coexistence heartbeat: any owner echo proves Jim's WhatsApp Business
+    // app is alive, so reset the 13-day timer. Best-effort — never throws.
+    try {
+      await this.bookingRules.recordOwnerEchoSeen();
+    } catch (err) {
+      this.logger.warn('booking-rules', 'recordOwnerEchoSeen failed', {
+        phone,
+        error: (err as Error).message,
+      });
+    }
   }
 
   async handle(msg: IncomingMessage): Promise<void> {

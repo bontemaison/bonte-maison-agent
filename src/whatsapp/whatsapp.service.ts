@@ -5,6 +5,7 @@ import { LoggerService } from '../logger/logger.service';
 import type {
   IncomingMessage,
   OutboundEcho,
+  SignatureDebug,
   WhatsAppProvider,
 } from './providers/provider.interface';
 
@@ -81,6 +82,13 @@ export class WhatsappService {
     headers: Record<string, string | undefined>,
   ): boolean {
     return this.provider.validateWebhookSignature(raw, headers);
+  }
+
+  debugSignature(
+    raw: Buffer,
+    headers: Record<string, string | undefined>,
+  ): SignatureDebug | null {
+    return this.provider.debugSignature?.(raw, headers) ?? null;
   }
 
   // Meta's webhook verification handshake is provider-agnostic: it just needs

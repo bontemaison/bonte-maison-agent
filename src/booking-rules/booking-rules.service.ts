@@ -12,6 +12,8 @@ const YEAR_2026_FULLY_BOOKED_KEY = 'year_2026_fully_booked';
 const INSTANT_BOOK_ENABLED_KEY = 'instant_book_enabled';
 const OWNER_NOTIFY_PHONE_ENABLED_KEY = 'owner_notify_phone_enabled';
 const OWNER_NOTIFY_EMAIL_ENABLED_KEY = 'owner_notify_email_enabled';
+const LAST_OWNER_ECHO_AT_KEY = 'last_owner_echo_at';
+const HEARTBEAT_WARNING_SENT_AT_KEY = 'heartbeat_warning_sent_at';
 
 type BookingRulesFields = {
   key?: string;
@@ -118,6 +120,84 @@ export class BookingRulesService {
    */
   async isOwnerEmailNotifyEnabled(): Promise<boolean> {
     return this.getBooleanFlag(OWNER_NOTIFY_EMAIL_ENABLED_KEY, true);
+  }
+
+  /**
+   * Record that we just saw an owner echo (Coexistence smb_message_echoes).
+   * Drives the 13-day heartbeat: if too long elapses without one, Coexistence
+   * breaks and the number disconnects.
+   */
+  async recordOwnerEchoSeen(now: Date = new Date()): Promise<void> {
+    await this.setStringFlag(LAST_OWNER_ECHO_AT_KEY, now.toISOString());
+  }
+
+  async getLastOwnerEchoAt(): Promise<Date | null> {
+    return this.getDateFlag(LAST_OWNER_ECHO_AT_KEY);
+  }
+
+  async markHeartbeatWarningSent(now: Date = new Date()): Promise<void> {
+    await this.setStringFlag(HEARTBEAT_WARNING_SENT_AT_KEY, now.toISOString());
+  }
+
+  async getHeartbeatWarningSentAt(): Promise<Date | null> {
+    return this.getDateFlag(HEARTBEAT_WARNING_SENT_AT_KEY);
+  }
+
+  private async getDateFlag(key: string): Promise<Date | null> {
+    const raw = await this.getStringFlag(key);
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  private async getStringFlag(key: string): Promise<string | null> {
+    try {
+      const rows = await this.airtable.list<BookingRulesFields>(
+        'BookingRules',
+        {
+          filterByFormula: `{key}='${key}'`,
+          maxRecords: 1,
+        },
+      );
+      const raw = rows[0]?.fields.value;
+      if (raw === undefined || raw === null || raw === '') return null;
+      return String(raw);
+    } catch (err) {
+      this.logger.warn('booking-rules', 'string flag read failed', {
+        key,
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
+  private async setStringFlag(key: string, value: string): Promise<void> {
+    try {
+      const rows = await this.airtable.list<BookingRulesFields>(
+        'BookingRules',
+        {
+          filterByFormula: `{key}='${key}'`,
+          maxRecords: 1,
+        },
+      );
+      const existing = rows[0];
+      if (existing) {
+        await this.airtable.update<BookingRulesFields>('BookingRules', existing.id, {
+          value,
+        });
+        return;
+      }
+      await this.airtable.create<BookingRulesFields>('BookingRules', {
+        key,
+        value,
+        active: true,
+      });
+    } catch (err) {
+      this.logger.error('booking-rules', 'string flag write failed', {
+        key,
+        error: (err as Error).message,
+      });
+    }
   }
 
   private async getBooleanFlag(

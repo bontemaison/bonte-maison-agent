@@ -177,6 +177,7 @@ describe('CloudApiProvider', () => {
         {
           changes: [
             {
+              field: 'messages',
               value: {
                 messages: [
                   { from: '628123456789', id: 'wamid.abc', type: 'text', text: { body: 'hello' } },
@@ -210,6 +211,142 @@ describe('CloudApiProvider', () => {
       };
       expect(provider.parseWebhook(audioPayload)).toBeNull();
     });
+
+    it('ignores Coexistence smb_message_echoes events (owner-sent)', () => {
+      // Without the field filter, the bot would misread Jim's own outbound
+      // reply as a fresh customer inbound from Jim's number.
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
+      const echoPayload = {
+        entry: [
+          {
+            changes: [
+              {
+                field: 'smb_message_echoes',
+                value: {
+                  messages: [
+                    {
+                      from: '447111222333',
+                      to: '628123456789',
+                      id: 'wamid.echo',
+                      type: 'text',
+                      text: { body: 'hi, this is jim' },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      expect(provider.parseWebhook(echoPayload)).toBeNull();
+    });
+  });
+
+  describe('parseOutboundEcho', () => {
+    it('extracts the owner echo from an smb_message_echoes event', () => {
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
+      const payload = {
+        entry: [
+          {
+            changes: [
+              {
+                field: 'smb_message_echoes',
+                value: {
+                  messages: [
+                    {
+                      from: '447111222333',
+                      to: '628123456789',
+                      id: 'wamid.echo',
+                      type: 'text',
+                      text: { body: 'hi, this is jim' },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      expect(provider.parseOutboundEcho(payload)).toEqual({
+        to: '628123456789',
+        text: 'hi, this is jim',
+        id: 'wamid.echo',
+      });
+    });
+
+    it('returns null for a normal inbound messages event', () => {
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
+      const payload = {
+        entry: [
+          {
+            changes: [
+              {
+                field: 'messages',
+                value: {
+                  messages: [
+                    { from: '628', id: 'wamid.in', type: 'text', text: { body: 'hi' } },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      expect(provider.parseOutboundEcho(payload)).toBeNull();
+    });
+
+    it('returns null for a non-text echo (image, etc.)', () => {
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
+      const payload = {
+        entry: [
+          {
+            changes: [
+              {
+                field: 'smb_message_echoes',
+                value: { messages: [{ from: '447', to: '628', id: 'wamid.img', type: 'image' }] },
+              },
+            ],
+          },
+        ],
+      };
+      expect(provider.parseOutboundEcho(payload)).toBeNull();
+    });
+
+    it('returns null for an unrecognised payload shape', () => {
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
+      expect(provider.parseOutboundEcho({})).toBeNull();
+    });
+  });
+
+  describe('Graph API version', () => {
+    it('defaults to v25.0 when WHATSAPP_GRAPH_VERSION is unset', async () => {
+      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.v' }] } });
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
+
+      await provider.sendMessage('628', 'hi');
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.stringContaining('/v25.0/phone-id-123/messages'),
+        expect.any(Object),
+        expect.any(Object),
+      );
+    });
+
+    it('honours WHATSAPP_GRAPH_VERSION override', async () => {
+      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.v' }] } });
+      const provider = new CloudApiProvider(
+        makeConfig({ WHATSAPP_GRAPH_VERSION: 'v23.0' }),
+        makeLogger(),
+      );
+
+      await provider.sendMessage('628', 'hi');
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.stringContaining('/v23.0/phone-id-123/messages'),
+        expect.any(Object),
+        expect.any(Object),
+      );
+    });
   });
 
   describe('validateWebhookSignature', () => {
@@ -232,6 +369,23 @@ describe('CloudApiProvider', () => {
     it('rejects when the signature header is missing', () => {
       const provider = new CloudApiProvider(makeConfig(), makeLogger());
       expect(provider.validateWebhookSignature(Buffer.from('{}'), {})).toBe(false);
+    });
+
+    it('returns true unconditionally when WHATSAPP_SKIP_SIGNATURE_CHECK=true', () => {
+      const logger = makeLogger();
+      const provider = new CloudApiProvider(
+        makeConfig({ WHATSAPP_SKIP_SIGNATURE_CHECK: 'true' }),
+        logger,
+      );
+      expect(provider.validateWebhookSignature(Buffer.from('{}'), {})).toBe(true);
+      expect(provider.validateWebhookSignature(Buffer.from('{}'), {
+        'x-hub-signature-256': 'sha256=wrong',
+      })).toBe(true);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'whatsapp',
+        expect.stringContaining('WHATSAPP_SKIP_SIGNATURE_CHECK'),
+        expect.any(Object),
+      );
     });
   });
 

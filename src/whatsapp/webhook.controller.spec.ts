@@ -31,6 +31,7 @@ const makeWhatsapp = (
   ({
     verifyWebhook: overrides.verifyWebhook ?? ((_m, _t, c) => c),
     validateWebhookSignature: overrides.validateWebhookSignature ?? (() => true),
+    debugSignature: () => null,
     parseWebhook: overrides.parseWebhook ?? (() => null),
     parseOutboundEcho: overrides.parseOutboundEcho ?? (() => null),
     wasRecentlySentByBot: overrides.wasRecentlySentByBot ?? (() => false),

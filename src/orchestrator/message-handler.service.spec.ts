@@ -172,6 +172,7 @@ const makeBookingRules = (
     validate: jest.fn().mockResolvedValue(result),
     isYearFullyBooked: jest.fn().mockResolvedValue(false),
     isInstantBookEnabled: jest.fn().mockResolvedValue(false),
+    recordOwnerEchoSeen: jest.fn().mockResolvedValue(undefined),
   }) as unknown as BookingRulesService;
 
 const makeHolds = (hasOverlap = false): HoldsService =>
@@ -411,15 +412,26 @@ describe('MessageHandlerService.handleOwnerTakeover', () => {
     expect(followUps.cancel).toHaveBeenCalledWith(CUSTOMER);
   });
 
+  it('records the owner echo to reset the Coexistence heartbeat', async () => {
+    const bookingRules = makeBookingRules();
+    const handler = build({ bookingRules });
+
+    await handler.handleOwnerTakeover(CUSTOMER);
+
+    expect(bookingRules.recordOwnerEchoSeen).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores echoes addressed to the owner phone (Jim messaging himself)', async () => {
     const conversation = makeConversation();
     const followUps = makeFollowUps();
-    const handler = build({ conversation, followUps });
+    const bookingRules = makeBookingRules();
+    const handler = build({ conversation, followUps, bookingRules });
 
     await handler.handleOwnerTakeover(OWNER);
 
     expect(conversation.setStatus).not.toHaveBeenCalled();
     expect(followUps.cancel).not.toHaveBeenCalled();
+    expect(bookingRules.recordOwnerEchoSeen).not.toHaveBeenCalled();
   });
 });
 
