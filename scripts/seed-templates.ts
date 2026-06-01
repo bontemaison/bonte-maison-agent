@@ -297,12 +297,12 @@ const TEMPLATES: TemplateRow[] = [
   {
     key: 'discount_request',
     variant: 1,
-    text: `Thank you for asking.\n\nWe don't usually reduce individual peak-week rates, as the most popular dates tend to book well in advance and the rate reflects exclusive use of the full villa — pool, two hot tubs, outdoor dining, cleaning, linen, towels and the welcome pack.\n\nFor longer stays of two weeks or more, I'm sometimes able to reflect the saving from one less changeover. If you share the week or weeks you're considering, I can look at the best option for you.\n\nMany thanks`,
+    text: `Thank you for asking.\n\nWe don't usually reduce individual peak-week rates, as the most popular dates tend to book well in advance and the rate reflects exclusive use of the full villa — pool, two hot tubs, outdoor dining, cleaning, linen, towels and the welcome pack.\n\nFor longer stays of two weeks or more, I'm sometimes able to reflect the saving from one less changeover. I'll look into the best option for you and come back to you personally.\n\nMany thanks`,
   },
   {
     key: 'discount_request',
     variant: 2,
-    text: `Thanks for asking.\n\nWe don't usually discount individual weeks — Bonté is reserved exclusively for one group and the most sought-after dates tend to go well in advance. For stays of two weeks or more I can sometimes build in a small saving, as there's one less changeover.\n\nIf you let me know the dates you're considering, I'll look at the best option for you.\n\nMany thanks`,
+    text: `Thanks for asking.\n\nWe don't usually discount individual weeks — Bonté is reserved exclusively for one group and the most sought-after dates tend to go well in advance. For stays of two weeks or more I can sometimes build in a small saving, as there's one less changeover.\n\nLeave it with me and I'll come back to you personally with the best option.\n\nMany thanks`,
   },
 
   // group_size_confirmation
