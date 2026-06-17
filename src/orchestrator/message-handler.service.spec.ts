@@ -490,6 +490,38 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
     expect(templateCalls(templates)).toContain('availability_no_priority');
   });
 
+  it('sends availability_pending_pricing (not a firm quote) when only the base rate matched', async () => {
+    const parser = makeParser({
+      intent: 'availability_inquiry',
+      checkIn: SUN_CHECK_IN,
+      checkOut: SUN_CHECK_OUT,
+    });
+    const pricing = makePricing({
+      weeks: 1,
+      nights: 7,
+      weeklyRate: 2495,
+      subtotal: 2495,
+      total: 2495,
+      minWeeks: 0,
+      meetsMinWeeks: true,
+      usedBase: true,
+    });
+    const templates = makeTemplates();
+    const notifications = makeNotifications();
+    const handler = build({ parser, pricing, templates, notifications });
+
+    await handler.handle({ from: CUSTOMER, text: 'is that week free in 2031?' });
+
+    const calls = templateCalls(templates);
+    expect(calls).toContain('availability_pending_pricing');
+    expect(calls).not.toContain('availability_yes_quote');
+    expect(notifications.notifyOwnerAboutConversation).toHaveBeenCalledWith(
+      CUSTOMER,
+      'pricing_pending',
+      expect.anything(),
+    );
+  });
+
   it('appends the September wine-harvest note when check-in falls in September', async () => {
     const parser = makeParser({
       intent: 'availability_inquiry',

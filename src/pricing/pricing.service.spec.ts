@@ -140,6 +140,51 @@ describe('PricingService.quote (pure)', () => {
     ).toThrow(/no pricing rule/i);
   });
 
+  it('falls back to the base rate when no band covers the check-in', () => {
+    const rules = [
+      rule({
+        startDate: new Date('2027-07-01'),
+        endDate: new Date('2027-07-31'),
+        weeklyRate: 4995,
+        label: 'High Summer',
+      }),
+    ];
+
+    const q = service.quote(
+      rules,
+      new Date('2030-07-07'),
+      new Date('2030-07-14'),
+      { weeklyRate: 2495, minWeeks: 1, label: 'base' },
+    );
+
+    expect(q.weeklyRate).toBe(2495);
+    expect(q.label).toBe('base');
+    expect(q.total).toBe(2495);
+    expect(q.usedBase).toBe(true);
+  });
+
+  it('prefers a matching band over the base rate', () => {
+    const rules = [
+      rule({
+        startDate: new Date('2027-07-01'),
+        endDate: new Date('2027-08-01'),
+        weeklyRate: 4995,
+        label: 'High Summer',
+      }),
+    ];
+
+    const q = service.quote(
+      rules,
+      new Date('2027-07-04'),
+      new Date('2027-07-11'),
+      { weeklyRate: 2495, label: 'base' },
+    );
+
+    expect(q.weeklyRate).toBe(4995);
+    expect(q.label).toBe('High Summer');
+    expect(q.usedBase).toBe(false);
+  });
+
   it('throws on invalid range (checkOut <= checkIn)', () => {
     expect(() =>
       service.quote([], new Date('2027-06-06'), new Date('2027-06-06')),
@@ -233,6 +278,38 @@ describe('PricingService.calculate (Airtable integration)', () => {
     expect(q.weeks).toBe(2);
     expect(q.subtotal).toBe(7990);
     expect(q.label).toBe('Summer');
+  });
+
+  it('uses a dateless row as the base rate when no band covers the check-in', async () => {
+    const airtable = makeAirtable([
+      {
+        id: 'base',
+        fields: { weekly_rate: 2495, min_weeks: 1, label: 'base' },
+      },
+      {
+        id: 'summer',
+        fields: {
+          start_date: '2027-05-30',
+          end_date: '2027-08-29',
+          weekly_rate: 4995,
+          label: 'High Summer 2027',
+        },
+      },
+    ]);
+    const logger = makeLogger();
+    const service = new PricingService(airtable, logger);
+
+    const q = await service.calculate(
+      new Date('2030-07-07'),
+      new Date('2030-07-14'),
+    );
+
+    expect(q.weeklyRate).toBe(2495);
+    expect(q.label).toBe('base');
+    expect(q.total).toBe(2495);
+    expect(q.usedBase).toBe(true);
+    // A dateless row with a rate is the base rate, not a malformed row.
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('skips Airtable rows missing required fields and logs a warning', async () => {

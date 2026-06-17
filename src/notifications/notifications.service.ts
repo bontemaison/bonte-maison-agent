@@ -212,6 +212,8 @@ export class NotificationsService {
         return this.tplHumanRequest(ctx);
       case 'long_stay_manual_pricing':
         return this.tplLongStay(ctx);
+      case 'pricing_pending':
+        return this.tplPricingPending(ctx);
       case 'unclear_or_off_topic':
         return this.tplUnclear(ctx);
       case 'orchestrator_error':
@@ -307,6 +309,24 @@ export class NotificationsService {
     }
     if (ctx.message) lines.push('', `"${ctx.message}"`);
     lines.push('', 'Not quoted yet — over to you.');
+    return lines;
+  }
+
+  private tplPricingPending(ctx: ReasonContext): string[] {
+    const lines: string[] = [
+      '*Future dates — no rate set yet.*',
+      '',
+      this.guestLine(ctx),
+    ];
+    if (ctx.datesFormatted) {
+      const tail = ctx.nightsLabel ? ` (${ctx.nightsLabel})` : '';
+      lines.push('', `Dates: ${ctx.datesFormatted}${tail}`);
+    }
+    if (ctx.message) lines.push('', `"${ctx.message}"`);
+    lines.push(
+      '',
+      "Calendar's open but no band priced for that period. Told them you'd confirm the rate, over to you.",
+    );
     return lines;
   }
 

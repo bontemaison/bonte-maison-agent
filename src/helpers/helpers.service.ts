@@ -19,6 +19,9 @@ export type WeekWithPrice = AvailableWeek & {
   total: number;
   weeklyRate: number;
   label?: string;
+  /** True when this week's price came from the base/fallback rate, not a
+   *  real seasonal band — i.e. the period isn't priced yet. */
+  usedBase: boolean;
 };
 
 @Injectable()
@@ -116,6 +119,7 @@ export class HelpersService {
         total: quote.total,
         weeklyRate: quote.weeklyRate,
         label: quote.label,
+        usedBase: quote.usedBase,
       });
     }
     return enriched;

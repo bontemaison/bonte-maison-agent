@@ -223,7 +223,7 @@ describe('CloudApiProvider', () => {
               {
                 field: 'smb_message_echoes',
                 value: {
-                  messages: [
+                  message_echoes: [
                     {
                       from: '447111222333',
                       to: '628123456789',
@@ -252,7 +252,7 @@ describe('CloudApiProvider', () => {
               {
                 field: 'smb_message_echoes',
                 value: {
-                  messages: [
+                  message_echoes: [
                     {
                       from: '447111222333',
                       to: '628123456789',
@@ -303,7 +303,7 @@ describe('CloudApiProvider', () => {
             changes: [
               {
                 field: 'smb_message_echoes',
-                value: { messages: [{ from: '447', to: '628', id: 'wamid.img', type: 'image' }] },
+                value: { message_echoes: [{ from: '447', to: '628', id: 'wamid.img', type: 'image' }] },
               },
             ],
           },

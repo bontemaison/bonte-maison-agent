@@ -14,7 +14,7 @@ import {
 } from '../conversation/conversation.service';
 import { FollowUpsService } from '../follow-ups/follow-ups.service';
 import { Fragment, FragmentsService } from '../fragments/fragments.service';
-import { HelpersService } from '../helpers/helpers.service';
+import { HelpersService, WeekWithPrice } from '../helpers/helpers.service';
 import { HoldsService } from '../holds/holds.service';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
 import { LoggerService } from '../logger/logger.service';
@@ -435,6 +435,38 @@ export class MessageHandlerService {
 
     const quote = await this.pricing.calculate(merged.checkIn, merged.checkOut);
 
+    // The week is free, but it falls in a period Jim hasn't priced yet (no
+    // seasonal band — only the base/fallback rate matched). Don't quote the
+    // base rate as a firm price; confirm it's open, say the rate will follow,
+    // and flag it to Jim.
+    if (quote.usedBase) {
+      await this.sendTemplate(from, 'availability_pending_pricing', {
+        name,
+        name_comma: name ? `, ${name}` : '',
+        check_in: this.formatDate(merged.checkIn),
+        check_out: this.formatDate(merged.checkOut),
+        year: String(merged.checkIn.getUTCFullYear()),
+      });
+      await this.recordQuoteSafe(from, datesLabel, 0, 'pending');
+      await this.notifications.notifyOwnerAboutConversation(
+        from,
+        'pricing_pending',
+        {
+          intent: 'availability_inquiry',
+          extra: { year: merged.checkIn.getUTCFullYear() },
+        },
+      );
+      try {
+        await this.followUps.schedule(from);
+      } catch (err) {
+        this.logger.warn('follow-ups', 'schedule after pending-pricing failed', {
+          from,
+          error: (err as Error).message,
+        });
+      }
+      return;
+    }
+
     const quoteText = await this.templates.render('availability_yes_quote', {
       name,
       check_in: this.formatDate(merged.checkIn),
@@ -609,40 +641,48 @@ export class MessageHandlerService {
     }
 
     const facts: CompositionFact[] = [];
+    let summary: WeekWithPrice[] = [];
+    let periodLabel = '';
+    let periodPreposition = 'in';
     if (parsed.monthQuery) {
-      const summary = await this.helpers.monthAvailabilitySummary(
+      summary = await this.helpers.monthAvailabilitySummary(
         parsed.monthQuery.year,
         parsed.monthQuery.month,
       );
-      facts.push({
-        key: 'available_weeks',
-        text:
-          summary.length === 0
-            ? `No Sunday-to-Sunday weeks are available in ${this.formatMonthYear(parsed.monthQuery)}.`
-            : summary
-                .map(
-                  (w) =>
-                    `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} at ${this.formatPrice(w.total)}`,
-                )
-                .join('\n'),
-      });
+      periodLabel = this.formatMonthYear(parsed.monthQuery);
     } else if (parsed.monthRangeQuery) {
-      const summary = await this.helpers.multiMonthAvailabilitySummary(
+      summary = await this.helpers.multiMonthAvailabilitySummary(
         parsed.monthRangeQuery.start,
         parsed.monthRangeQuery.end,
       );
+      periodLabel = `${this.formatMonthYear(parsed.monthRangeQuery.start)}–${this.formatMonthYear(parsed.monthRangeQuery.end)}`;
+      periodPreposition = 'across';
+    }
+
+    if (summary.length === 0) {
       facts.push({
         key: 'available_weeks',
-        text:
-          summary.length === 0
-            ? `No Sunday-to-Sunday weeks are available across ${this.formatMonthYear(parsed.monthRangeQuery.start)}–${this.formatMonthYear(parsed.monthRangeQuery.end)}.`
-            : summary
-                .map(
-                  (w) =>
-                    `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} at ${this.formatPrice(w.total)}`,
-                )
-                .join('\n'),
+        text: `No Sunday-to-Sunday weeks are available ${periodPreposition} ${periodLabel}.`,
       });
+    } else {
+      facts.push({
+        key: 'available_weeks',
+        text: summary
+          .map((w) =>
+            w.usedBase
+              ? `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} (rate to be confirmed)`
+              : `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} at ${this.formatPrice(w.total)}`,
+          )
+          .join('\n'),
+      });
+      // Weeks marked "(rate to be confirmed)" fall in a period Jim hasn't
+      // priced yet. The composer must not invent a price for them.
+      if (summary.some((w) => w.usedBase)) {
+        facts.push({
+          key: 'pricing_pending',
+          text: "Some weeks above show '(rate to be confirmed)' because we haven't finalised rates for that period yet. List those weeks as open, but NEVER state or invent a price for them — say the exact rate will be confirmed and you'll come back with it. Only quote a price for weeks that already show one.",
+        });
+      }
     }
 
     await this.composeOrFallback(from, parsed, merged, history, {
@@ -1260,7 +1300,7 @@ export class MessageHandlerService {
       case 'polite_close':
         return "The customer is winding down ('I'll think about it', 'cool that sounds nice', 'let me check with my partner'). Reply warmly with no pressure. IMPORTANT: if the recent history shows we've just listed availability or quoted a price, weave in a single short hold offer — e.g. 'happy to hold one of those weeks briefly while you decide'. If there's no recent quote/availability in history, just a warm acknowledgement is enough.";
       case 'month_query':
-        return "You're presenting availability (or lack of it) for a month or month range. STYLE RULES (tight, punchy, NOT a sales pitch):\n\n1) Open with one short sentence stating what's available, e.g. 'July 2027 has three weeks available right now.'\n2) Then list each available week ON ITS OWN LINE, with a blank line before and after the list. Format: '11 July to 18 July at £4,995.' One week per line. Do NOT chain weeks together in a single sentence with commas or semicolons. Do NOT use bullets or dashes — just plain lines separated by newlines.\n3) After the list, end with a single short question on its own line, e.g. 'Which of those works best for you?' If the guest has signalled interest, you may add one short hold-offer sentence; otherwise skip it.\n\nExample shape:\n\nJuly 2027 has three weeks available right now.\n\n11 July to 18 July at £4,995.\n18 July to 25 July at £4,995.\n25 July to 1 August at £4,995.\n\nWhich of those works best for you? Happy to hold a week for a few days while you have a think.\n\nDrop filler phrases like 'full school holiday feel', 'real atmosphere', 'often still'. Do NOT list weeks for a period the guest didn't ask about.";
+        return "You're presenting availability (or lack of it) for a month or month range. STYLE RULES (tight, punchy, NOT a sales pitch):\n\n1) Open with one short sentence stating what's available, e.g. 'July 2027 has three weeks available right now.'\n2) Then list each available week ON ITS OWN LINE, with a blank line before and after the list. Format: '11 July to 18 July at £4,995.' One week per line. Do NOT chain weeks together in a single sentence with commas or semicolons. Do NOT use bullets or dashes — just plain lines separated by newlines.\n3) After the list, end with a single short question on its own line, e.g. 'Which of those works best for you?' If the guest has signalled interest, you may add one short hold-offer sentence; otherwise skip it.\n\nExample shape:\n\nJuly 2027 has three weeks available right now.\n\n11 July to 18 July at £4,995.\n18 July to 25 July at £4,995.\n25 July to 1 August at £4,995.\n\nWhich of those works best for you? Happy to hold a week for a few days while you have a think.\n\nDrop filler phrases like 'full school holiday feel', 'real atmosphere', 'often still'. Do NOT list weeks for a period the guest didn't ask about.\n\nIf a week is shown as '(rate to be confirmed)' instead of a price, list it on its own line the same way and say the exact rate will be confirmed, but NEVER make up a number for it.";
       case 'correction':
         return "The customer is correcting or pushing back on YOUR previous reply. Apologise briefly for the misunderstanding and ask what they'd like to know. Don't escalate.";
       case 'unclear':
@@ -1268,7 +1308,7 @@ export class MessageHandlerService {
       case 'faq_unknown':
         return "You don't have a fact to answer this question. Acknowledge the question and say you'll come back shortly with the answer. Do not invent details.";
       case 'dates_unclear':
-        return "The customer asked about availability without giving Sunday-to-Sunday dates. Ask them to share specific Sunday check-in / check-out dates so you can quote properly.";
+        return "The customer asked about availability (possibly naming only a year, e.g. 'can we book for 2028?') but gave no specific dates, so nothing has been checked. CRITICAL: do NOT comment on whether that year, month or any dates are available, free, booked, 'open', or 'released' — you have not looked. Simply, warmly invite them to share the specific week they have in mind (Sunday-to-Sunday check-in / check-out, or a rough month) so you can check availability and quote for them. One or two short sentences.";
       default:
         return null;
     }

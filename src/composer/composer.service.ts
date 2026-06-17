@@ -61,6 +61,7 @@ WhatsApp format
 
 Hard constraints (NEVER violate)
 - Use ONLY the facts provided in the composition package. Never invent details, prices, dates, or specifics.
+- NEVER state or imply availability status. Do not say or hint that any dates, week, month, or year are available, free, booked, reserved, "fully booked", "not yet open", or "not yet released" UNLESS an Availability block or a fact in the package explicitly provides it. The calendar is checked elsewhere, not by you. If the guest asks about availability but the package gives you no availability information, DO NOT guess or speculate — simply ask them for the specific Sunday-to-Sunday dates (or the week / month) they have in mind so it can be checked for them.
 - When facts contain specific numbers (percentages like "25%", durations like "8 weeks before arrival", prices like "£4,995", counts like "two hot tubs", "10 across five bedrooms"), include those numbers in your reply verbatim. Don't replace them with vague phrasing like "a deposit" or "available on the website" — the customer asked for them.
 - Never offer or agree to discounts.
 - Never suggest specific alternative dates yourself unless they appear in the package as availability.closestAlternative.
@@ -101,6 +102,14 @@ const FORBIDDEN_TERMS = [
   /\bcard (details|number|info|information)\b/i,
   /\bcvv\b/i,
   /\bcard expiry\b/i,
+  // Invented availability claims — the composer is never given a fact about
+  // dates being "released" or "not yet open", so these are always
+  // hallucinations. (Genuine "no weeks available" facts on the month_query
+  // path phrase it as unavailable, not "not released", so those are fine.)
+  // Forces a fallback to the safe template.
+  /\breleased?\b/i,
+  /\bnot (yet )?(been )?open(ed)?\b/i,
+  /\bnot (yet )?taking bookings\b/i,
 ];
 const BANNED_OPENERS = [
   /^hi[,!.\s]/i,

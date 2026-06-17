@@ -87,6 +87,22 @@ describe('ComposerService', () => {
     }
   });
 
+  it('rejects invented availability claims about dates not being released yet', async () => {
+    mockCreate.mockResolvedValue(
+      claudeText(
+        "For 2028 dates, I don't have that availability open just yet. I'll be in touch as soon as those weeks are released.",
+      ),
+    );
+    const svc = new ComposerService(makeLogger(), makeConfig());
+
+    const result = await svc.compose(basePkg({ scenarioHint: 'dates_unclear', facts: [] }));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toMatch(/forbidden_term/);
+    }
+  });
+
   it('rejects output that opens with a banned greeting mid-conversation', async () => {
     mockCreate.mockResolvedValue(
       claudeText('Hi! Dogs are very welcome here. Just shout if anything else comes up.'),

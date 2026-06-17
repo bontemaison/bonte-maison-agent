@@ -8,18 +8,23 @@
  *
  * Airtable table must have fields: label (string), start_date (date),
  * end_date (date), weekly_rate (currency/number), min_weeks (number).
+ *
+ * The `base` row has a weekly_rate but no start_date/end_date. PricingService
+ * uses it as the fallback rate for any check-in not covered by a seasonal band
+ * (e.g. years beyond the seeded bands).
  */
 import Airtable from 'airtable';
 
 type PricingRow = {
   label: string;
-  start_date: string;
-  end_date: string;
+  start_date?: string;
+  end_date?: string;
   weekly_rate: number;
   min_weeks: number;
 };
 
 const PRICING_BANDS: PricingRow[] = [
+  { label: 'base',             weekly_rate: 2495, min_weeks: 1 },
   { label: 'Low season',       start_date: '2026-10-03', end_date: '2027-05-30', weekly_rate: 2495, min_weeks: 1 },
   { label: 'Summer 2027',      start_date: '2027-05-30', end_date: '2027-07-11', weekly_rate: 3995, min_weeks: 1 },
   { label: 'High Summer 2027', start_date: '2027-07-11', end_date: '2027-08-29', weekly_rate: 4995, min_weeks: 1 },

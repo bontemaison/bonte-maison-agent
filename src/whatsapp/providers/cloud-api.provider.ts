@@ -32,6 +32,8 @@ type CloudApiPayload = {
           profile?: { name?: string };
         }>;
         messages?: CloudApiMessage[];
+        // Coexistence echoes arrive under `message_echoes`, not `messages`.
+        message_echoes?: CloudApiMessage[];
       };
     }>;
   }>;
@@ -165,14 +167,16 @@ export class CloudApiProvider implements WhatsAppProvider {
   }
 
   // Coexistence: messages Jim sends from his WhatsApp Business app are mirrored
-  // back to us with `field: 'smb_message_echoes'`. `from` is Jim's number,
-  // `to` is the customer's. We treat any such echo as a human takeover.
+  // back to us with `field: 'smb_message_echoes'`, and the echo entries live
+  // under `value.message_echoes` (not `value.messages`). `from` is Jim's
+  // number, `to` is the customer's. We treat any such echo as a human takeover.
   parseOutboundEcho(payload: unknown): OutboundEcho | null {
     const body = payload as CloudApiPayload;
     for (const entry of body.entry ?? []) {
       for (const change of entry.changes ?? []) {
         if (change.field !== 'smb_message_echoes') continue;
-        for (const msg of change.value?.messages ?? []) {
+        const echoes = change.value?.message_echoes ?? change.value?.messages ?? [];
+        for (const msg of echoes) {
           if (msg.type === 'text' && msg.to && msg.text?.body) {
             return { to: msg.to, text: msg.text.body, id: msg.id };
           }

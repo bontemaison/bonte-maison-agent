@@ -10,6 +10,17 @@ export type PricingRule = {
   label?: string;
 };
 
+/**
+ * Fallback weekly rate applied when no seasonal band covers the check-in date.
+ * Stored in Airtable as a Pricing row with a `weekly_rate` but no
+ * `start_date` / `end_date`.
+ */
+export type BaseRate = {
+  weeklyRate: number;
+  minWeeks?: number;
+  label?: string;
+};
+
 export type Quote = {
   weeks: number;
   nights: number;
@@ -19,6 +30,12 @@ export type Quote = {
   total: number;
   minWeeks: number;
   meetsMinWeeks: boolean;
+  /**
+   * True when no seasonal band covered the check-in and the base/fallback rate
+   * was used. Signals an unpriced period (e.g. a future year Jim hasn't set
+   * rates for yet) — callers should NOT present this as a firm quote.
+   */
+  usedBase: boolean;
 };
 
 type PricingFields = {
@@ -41,16 +58,24 @@ export class PricingService {
   async calculate(checkIn: Date, checkOut: Date): Promise<Quote> {
     const rows = await this.airtable.list<PricingFields>('Pricing');
     const rules: PricingRule[] = [];
+    let base: BaseRate | undefined;
     for (const row of rows) {
       const f = row.fields;
-      if (
-        typeof f.weekly_rate !== 'number' ||
-        !f.start_date ||
-        !f.end_date
-      ) {
+      if (typeof f.weekly_rate !== 'number') {
         this.logger.warn('pricing', 'skipping malformed pricing row', {
           id: row.id,
         });
+        continue;
+      }
+      // A row with a rate but no date range is the base/fallback rate, applied
+      // to any check-in not covered by a specific seasonal band (e.g. years
+      // beyond the seeded bands). Last dateless row wins.
+      if (!f.start_date || !f.end_date) {
+        base = {
+          weeklyRate: f.weekly_rate,
+          minWeeks: f.min_weeks,
+          label: f.label ?? 'base',
+        };
         continue;
       }
       rules.push({
@@ -61,10 +86,15 @@ export class PricingService {
         label: f.label,
       });
     }
-    return this.quote(rules, checkIn, checkOut);
+    return this.quote(rules, checkIn, checkOut, base);
   }
 
-  quote(rules: PricingRule[], checkIn: Date, checkOut: Date): Quote {
+  quote(
+    rules: PricingRule[],
+    checkIn: Date,
+    checkOut: Date,
+    base?: BaseRate,
+  ): Quote {
     if (checkOut.getTime() <= checkIn.getTime()) {
       throw new Error('checkOut must be after checkIn');
     }
@@ -79,11 +109,26 @@ export class PricingService {
     }
     const weeks = nights / 7;
 
-    const rule = this.pickRule(rules, checkIn);
+    let rule = this.pickRule(rules, checkIn);
+    let usedBase = false;
     if (!rule) {
-      throw new Error(
-        `no pricing rule covers check-in ${checkIn.toISOString().slice(0, 10)}`,
-      );
+      if (!base) {
+        throw new Error(
+          `no pricing rule covers check-in ${checkIn.toISOString().slice(0, 10)}`,
+        );
+      }
+      this.logger.info('pricing', 'no band matched; using base rate', {
+        checkIn: checkIn.toISOString().slice(0, 10),
+        weeklyRate: base.weeklyRate,
+      });
+      usedBase = true;
+      rule = {
+        startDate: checkIn,
+        endDate: checkOut,
+        weeklyRate: base.weeklyRate,
+        minWeeks: base.minWeeks,
+        label: base.label,
+      };
     }
 
     const subtotal = weeks * rule.weeklyRate;
@@ -98,6 +143,7 @@ export class PricingService {
       total: subtotal,
       minWeeks,
       meetsMinWeeks: weeks >= minWeeks,
+      usedBase,
     };
   }
 

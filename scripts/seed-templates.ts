@@ -148,6 +148,21 @@ const TEMPLATES: TemplateRow[] = [
     text: `Those dates look available based on what I'm seeing, though it's subject to final confirmation.\n\nI'll double-check and come back to you shortly.\n\nMany thanks`,
   },
 
+  // availability_pending_pricing — the week is free on the calendar but falls in
+  // a future period Jim hasn't set rates for yet (only the base rate matched).
+  // Never quote the base rate as firm; confirm it's open and that the rate will
+  // follow. {year} is the check-in year. Jim is notified in parallel.
+  {
+    key: 'availability_pending_pricing',
+    variant: 1,
+    text: `That week looks open at the moment, {check_in} to {check_out}.\n\nWe haven't finalised our {year} rates just yet, so let me confirm the exact price for you and come straight back.\n\nHappy to note your interest in the meantime, just say the word.\n\nMany thanks`,
+  },
+  {
+    key: 'availability_pending_pricing',
+    variant: 2,
+    text: `Good news, {check_in} to {check_out} looks open.\n\nOur {year} pricing isn't quite settled yet, so I'll confirm the exact rate and come straight back to you.\n\nIn the meantime I'm very happy to note your interest, just let me know.\n\nMany thanks`,
+  },
+
   // ── 3. HOLD FLOW ──────────────────────────────────────────────────────
 
   // hold_offer_post_quote (usually bundled into availability_yes_quote)
