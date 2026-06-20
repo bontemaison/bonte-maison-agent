@@ -16,6 +16,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * imapflow throws a bare `Error('Command failed')` on a NO/BAD IMAP response
+ * and attaches the real detail to extra properties. Surface them so the log
+ * tells us *which* command failed and *why* (auth, mailbox, throttling, etc.).
+ */
+function describeImapError(err: unknown): Record<string, unknown> {
+  const e = err as {
+    message?: string;
+    code?: string;
+    responseText?: string;
+    responseStatus?: string;
+    executedCommand?: string;
+    authenticationFailed?: boolean;
+  };
+  return {
+    error: e?.message ?? String(err),
+    code: e?.code,
+    responseStatus: e?.responseStatus,
+    responseText: e?.responseText,
+    executedCommand: e?.executedCommand,
+    authenticationFailed: e?.authenticationFailed,
+  };
+}
+
 @Injectable()
 export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
   private readonly host: string | undefined;
@@ -99,9 +123,7 @@ export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
       });
 
       client.on('error', (err) => {
-        this.logger.error('email-integration', 'IMAP client error', {
-          error: (err as Error).message,
-        });
+        this.logger.error('email-integration', 'IMAP client error', describeImapError(err));
       });
 
       await client.connect();
@@ -134,9 +156,7 @@ export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
         lock.release();
       }
     } catch (err) {
-      this.logger.error('email-integration', 'poll failed', {
-        error: (err as Error).message,
-      });
+      this.logger.error('email-integration', 'poll failed', describeImapError(err));
     } finally {
       if (client) {
         try {

@@ -33,7 +33,9 @@
     "test:nudges": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/send-test-nudges.ts",
     "test:owner-notifications": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/send-test-owner-notifications.ts",
     "test:years": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/run-year-inquiries-test.ts",
-    "test:vague": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/run-vague-inquiries-test.ts"
+    "test:vague": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/run-vague-inquiries-test.ts",
+    "watch:imap": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/watch-imap.ts",
+    "test:e2e-nudge": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/test-e2e-nudge.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
