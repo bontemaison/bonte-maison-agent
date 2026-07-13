@@ -94,12 +94,7 @@ export class ConversationService {
   async getStatus(phone: string): Promise<ConversationStatus> {
     const row = await this.findRow(phone);
     if (!row) return 'bot';
-
-    const f = row.fields;
-    if (f.pause_status === 'paused' && f.pause_until) {
-      if (new Date(f.pause_until).getTime() < Date.now()) return 'bot';
-    }
-    return f.pause_status ?? 'bot';
+    return this.resolveStatus(row.fields);
   }
 
   async getState(phone: string): Promise<ConversationState> {
@@ -107,12 +102,7 @@ export class ConversationService {
     if (!row) return DEFAULT_STATE;
 
     const f = row.fields;
-    const effectiveStatus: ConversationStatus =
-      f.pause_status === 'paused' &&
-      f.pause_until &&
-      new Date(f.pause_until).getTime() < Date.now()
-        ? 'bot'
-        : (f.pause_status ?? 'bot');
+    const effectiveStatus = this.resolveStatus(f);
 
     return {
       status: effectiveStatus,
@@ -127,12 +117,7 @@ export class ConversationService {
     const row = await this.findRow(phone);
     if (!row) return null;
     const f = row.fields;
-    const effectiveStatus: ConversationStatus =
-      f.pause_status === 'paused' &&
-      f.pause_until &&
-      new Date(f.pause_until).getTime() < Date.now()
-        ? 'bot'
-        : (f.pause_status ?? 'bot');
+    const effectiveStatus = this.resolveStatus(f);
     return {
       customerName: f.customer_name?.trim() ? f.customer_name.trim() : null,
       email: f.email?.trim() ? f.email.trim() : null,
@@ -191,16 +176,65 @@ export class ConversationService {
   async statusCounts(): Promise<{ bot: number; human: number; paused: number }> {
     const rows = await this.airtable.list<ConversationFields>('Conversations', {});
     const counts = { bot: 0, human: 0, paused: 0 };
-    const now = Date.now();
     for (const row of rows) {
-      const f = row.fields;
-      let s: ConversationStatus = f.pause_status ?? 'bot';
-      if (s === 'paused' && f.pause_until && new Date(f.pause_until).getTime() < now) {
-        s = 'bot';
-      }
-      counts[s]++;
+      counts[this.resolveStatus(row.fields)]++;
     }
     return counts;
+  }
+
+  /**
+   * Sweep conversations whose pause window (`pause_until`) has lapsed and write
+   * them back to `bot` in Airtable so the CRM view reflects the resume. Covers
+   * both automatic human takeovers and timed `/pause <phone> <minutes>`. A
+   * `/release` sets `human` with no `pause_until`, so it is never swept —
+   * deliberate handovers stay with Jim until he `/resume`s. Returns the count
+   * flipped. Best-effort per row: one failure never aborts the sweep.
+   */
+  async resumeExpired(): Promise<number> {
+    const rows = await this.airtable.list<ConversationFields>('Conversations', {
+      filterByFormula: "OR({pause_status}='human',{pause_status}='paused')",
+    });
+    const now = Date.now();
+    this.logger.debug('conversation', 'resume sweep: candidates', {
+      count: rows.length,
+      rows: rows.map((r) => ({
+        phone: r.fields.phone,
+        pause_status: r.fields.pause_status,
+        pause_until: r.fields.pause_until ?? null,
+        expired: r.fields.pause_until
+          ? new Date(r.fields.pause_until).getTime() < now
+          : false,
+      })),
+    });
+    let resumed = 0;
+    for (const row of rows) {
+      const { pause_until, phone } = row.fields;
+      if (!pause_until || new Date(pause_until).getTime() >= now) continue;
+      try {
+        await this.airtable.update<ConversationFields>(
+          'Conversations',
+          row.id,
+          {
+            pause_status: 'bot',
+            // null (not '') clears an Airtable Date field — '' errors on it.
+            // Airtable's FieldSet types omit null, so cast locally.
+            pause_until: null as unknown as string,
+          },
+        );
+        resumed++;
+        this.logger.info(
+          'conversation',
+          'auto-resumed to bot after pause window',
+          { phone },
+        );
+      } catch (err) {
+        this.logger.warn('conversation', 'auto-resume write failed', {
+          phone,
+          error: (err as Error).message,
+        });
+      }
+    }
+    return resumed;
   }
 
   async setStatus(
@@ -323,6 +357,19 @@ export class ConversationService {
     if (cmd === 'release') return { command: 'release', phone };
     if (cmd === 'status') return { command: 'status', phone };
     return { command: 'resume', phone };
+  }
+
+  /**
+   * Effective pause status. A `pause_until` in the past means the pause window
+   * (timed `/pause`, or an automatic human takeover) has lapsed, so the bot is
+   * back on regardless of the stored `pause_status`. Rows with no `pause_until`
+   * (e.g. `/release`) keep their stored status indefinitely.
+   */
+  private resolveStatus(f: ConversationFields): ConversationStatus {
+    if (f.pause_until && new Date(f.pause_until).getTime() < Date.now()) {
+      return 'bot';
+    }
+    return f.pause_status ?? 'bot';
   }
 
   private parsePending(value: string | undefined): PendingDates | null {

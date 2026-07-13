@@ -31,6 +31,7 @@ import { TemplatesService, TemplateVars } from '../templates/templates.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 
 const PAUSE_ON_HANDOFF_MIN = 60;
+const TAKEOVER_WINDOW_MIN = 60;
 const HISTORY_LIMIT = 10;
 const SEPTEMBER = 8;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -78,10 +79,13 @@ export class MessageHandlerService {
 
     this.logger.info('conversation', 'human takeover detected — pausing bot for conversation', {
       phone,
+      windowMinutes: TAKEOVER_WINDOW_MIN,
     });
 
     try {
-      await this.conversation.setStatus(phone, 'human');
+      await this.conversation.setStatus(phone, 'human', {
+        pauseForMinutes: TAKEOVER_WINDOW_MIN,
+      });
     } catch (err) {
       this.logger.error('conversation', 'takeover setStatus failed', {
         phone,

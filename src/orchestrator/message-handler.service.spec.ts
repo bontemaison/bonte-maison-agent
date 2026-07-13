@@ -408,7 +408,9 @@ describe('MessageHandlerService.handleOwnerTakeover', () => {
 
     await handler.handleOwnerTakeover(CUSTOMER);
 
-    expect(conversation.setStatus).toHaveBeenCalledWith(CUSTOMER, 'human');
+    expect(conversation.setStatus).toHaveBeenCalledWith(CUSTOMER, 'human', {
+      pauseForMinutes: expect.any(Number),
+    });
     expect(followUps.cancel).toHaveBeenCalledWith(CUSTOMER);
   });
 

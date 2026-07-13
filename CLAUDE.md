@@ -317,9 +317,20 @@ When Jim replies in a customer thread from the business number's WhatsApp app
    - Hit → the bot itself sent this; ignore.
    - Miss → it's Jim replying directly. Call
      `MessageHandlerService.handleOwnerTakeover(echo.to)` to set the
-     conversation's `pause_status = human` and cancel any scheduled follow-ups.
+     conversation's `pause_status = human` **with a `pause_until` window**
+     (`TAKEOVER_WINDOW_MIN`) and cancel any scheduled follow-ups.
 3. The CloudAPI provider does not implement `parseOutboundEcho` — this flow is
    WATI-specific.
+
+**Auto-resume.** A takeover is temporary: the bot stands back down only until
+`pause_until` lapses. `ConversationService.resolveStatus` treats an expired
+`pause_until` as `bot` (so the read path — `canSendBot` etc. — resumes the
+instant the window ends), and `ConversationCronService` runs every minute to
+call `resumeExpired()`, which writes `pause_status` back to `bot` and clears
+`pause_until` in Airtable so the CRM view matches. `TAKEOVER_WINDOW_MIN` lives
+in `message-handler.service.ts` — **currently 1 minute for testing; restore to
+60 for production.** A manual `/release` sets `human` with *no* `pause_until`,
+so it never auto-resumes — that handover stays with Jim until he `/resume`s.
 
 ---
 

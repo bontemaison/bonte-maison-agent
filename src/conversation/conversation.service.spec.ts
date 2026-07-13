@@ -72,6 +72,96 @@ describe('ConversationService.getStatus', () => {
 
     expect(await service.getStatus('62812')).toBe('paused');
   });
+
+  it('resumes the bot once a human takeover window has expired', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const airtable = makeAirtable({
+      list: jest.fn().mockResolvedValue([
+        {
+          id: 'rec1',
+          fields: { phone: '62812', pause_status: 'human', pause_until: past },
+        },
+      ]),
+    });
+    const service = new ConversationService(airtable, makeLogger());
+
+    expect(await service.getStatus('62812')).toBe('bot');
+  });
+
+  it('stays human during the takeover window (future pause_until)', async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const airtable = makeAirtable({
+      list: jest.fn().mockResolvedValue([
+        {
+          id: 'rec1',
+          fields: { phone: '62812', pause_status: 'human', pause_until: future },
+        },
+      ]),
+    });
+    const service = new ConversationService(airtable, makeLogger());
+
+    expect(await service.getStatus('62812')).toBe('human');
+  });
+
+  it('keeps a manual /release (human, no pause_until) paused indefinitely', async () => {
+    const airtable = makeAirtable({
+      list: jest.fn().mockResolvedValue([
+        { id: 'rec1', fields: { phone: '62812', pause_status: 'human' } },
+      ]),
+    });
+    const service = new ConversationService(airtable, makeLogger());
+
+    expect(await service.getStatus('62812')).toBe('human');
+  });
+});
+
+describe('ConversationService.resumeExpired', () => {
+  it('writes expired human/paused rows back to bot and clears pause_until', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const airtable = makeAirtable({
+      list: jest.fn().mockResolvedValue([
+        { id: 'expired-human', fields: { phone: '1', pause_status: 'human', pause_until: past } },
+        { id: 'expired-paused', fields: { phone: '2', pause_status: 'paused', pause_until: past } },
+        { id: 'active-window', fields: { phone: '3', pause_status: 'human', pause_until: future } },
+        { id: 'released', fields: { phone: '4', pause_status: 'human' } },
+      ]),
+    });
+    const service = new ConversationService(airtable, makeLogger());
+
+    const resumed = await service.resumeExpired();
+
+    expect(resumed).toBe(2);
+    expect(airtable.update).toHaveBeenCalledWith('Conversations', 'expired-human', {
+      pause_status: 'bot',
+      pause_until: null,
+    });
+    expect(airtable.update).toHaveBeenCalledWith('Conversations', 'expired-paused', {
+      pause_status: 'bot',
+      pause_until: null,
+    });
+    expect(airtable.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('continues the sweep when one write fails', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const airtable = makeAirtable({
+      list: jest.fn().mockResolvedValue([
+        { id: 'boom', fields: { phone: '1', pause_status: 'human', pause_until: past } },
+        { id: 'ok', fields: { phone: '2', pause_status: 'paused', pause_until: past } },
+      ]),
+      update: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('airtable 500'))
+        .mockResolvedValueOnce({ id: 'ok', fields: {} }),
+    });
+    const service = new ConversationService(airtable, makeLogger());
+
+    const resumed = await service.resumeExpired();
+
+    expect(resumed).toBe(1);
+    expect(airtable.update).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('ConversationService.getState', () => {
