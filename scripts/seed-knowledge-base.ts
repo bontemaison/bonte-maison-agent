@@ -114,6 +114,11 @@ const KB_ENTRIES: KbRow[] = [
     question_examples: 'air conditioning, AC, A/C, is there air con, do you have air conditioning, is it hot inside',
     answer: `There isn't air conditioning at Bonté. The house is a traditional French property with thick stone walls and shutters, which keep it comfortably cool during the warmer months when guests use the shutters during the day and open up in the evenings. There are also fans in the bedrooms.\n\nMost of the summer is naturally spent outside by the pool, on the terrace or in the evening shade.`,
   },
+  {
+    topic_key: 'interior_photos',
+    question_examples: 'interior photos, photos of the inside, can I see pictures, what does it look like inside, pictures of the house, see inside, more photos, internal photos, interior pictures, gallery, do you have photos, images of the house',
+    answer: `You can see photos of the interior — and the rest of the house — here:\nwww.bontemaison.com/about-bonte\n\nIt gives a lovely feel for the space: the light-filled living areas, the kitchen and the bedrooms. If there's a particular room you'd like to see more of, just let me know.`,
+  },
 ];
 
 type FieldSet = {
