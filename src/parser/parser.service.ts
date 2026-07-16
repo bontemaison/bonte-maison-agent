@@ -65,7 +65,7 @@ Return ONLY a JSON object with these keys (no prose, no code fences):
   - "complaint_or_frustration" — genuine dissatisfaction with the property or stay (e.g. "the wifi doesn't work", "this has been a terrible experience"). Do NOT use this for the guest pushing back on YOUR previous reply or saying "that's not what I meant" — that's "correction".
   - "correction" — guest is pushing back on, correcting, or clarifying YOUR previous reply ("I didn't ask about that", "you misunderstood", "that's not what I meant"). Always set is_correction=true alongside this intent.
   - "polite_close" — guest is winding down conversationally without a question or commitment ("I'll think about it", "let me discuss with my partner", "leave it with me"). Distinct from acknowledgment because it explicitly says "I'm pausing/leaving" rather than just acknowledging.
-  - "acknowledgment" — short closer or filler signalling the current exchange is done ("thanks", "ok thanks", "noted", "great", "perfect"). No fresh question, no commitment.
+  - "acknowledgment" — short closer, farewell, or filler signalling the current exchange is done ("thanks", "ok thanks", "noted", "great", "perfect", "bye", "goodbye", "thanks, bye", "that's it, thanks"). No fresh question, no commitment.
   - "off_topic_or_unclear" — anything else you cannot classify confidently (and is not a correction or polite_close).
 - confidence: number from 0 to 1
 - customerName: guest's name if introduced, otherwise null

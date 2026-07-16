@@ -776,6 +776,108 @@ describe('MessageHandlerService.handle — composer-driven intents', () => {
     expect(composer.compose).not.toHaveBeenCalled();
     expect(whatsapp.sendMessage).not.toHaveBeenCalled();
   });
+
+  it('polite_close is silently dropped when previous intent was acknowledgment', async () => {
+    const parser = makeParser({ intent: 'polite_close' });
+    const composer = makeComposer();
+    const whatsapp = makeWhatsapp();
+    const conversation = makeConversation({
+      getState: jest.fn().mockResolvedValue({
+        status: 'bot',
+        lifecycleStatus: 'Responded',
+        lastIntent: 'acknowledgment',
+        pendingDates: null,
+        customerName: null,
+      }),
+    });
+    const handler = build({ parser, composer, whatsapp, conversation });
+
+    await handler.handle({ from: CUSTOMER, text: 'bye' });
+
+    expect(composer.compose).not.toHaveBeenCalled();
+    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('acknowledgment is silently dropped when previous intent was polite_close', async () => {
+    const parser = makeParser({ intent: 'acknowledgment' });
+    const composer = makeComposer();
+    const whatsapp = makeWhatsapp();
+    const conversation = makeConversation({
+      getState: jest.fn().mockResolvedValue({
+        status: 'bot',
+        lifecycleStatus: 'Responded',
+        lastIntent: 'polite_close',
+        pendingDates: null,
+        customerName: null,
+      }),
+    });
+    const handler = build({ parser, composer, whatsapp, conversation });
+
+    await handler.handle({ from: CUSTOMER, text: 'thanks, bye' });
+
+    expect(composer.compose).not.toHaveBeenCalled();
+    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('farewell polite_close composes a plain acknowledgment, not a hold-offer close', async () => {
+    const parser = makeParser({ intent: 'polite_close' });
+    const composer = makeComposer();
+    const handler = build({ parser, composer });
+
+    await handler.handle({ from: CUSTOMER, text: "that's it, bye, thanks" });
+
+    const [pkg] = composerCalls(composer);
+    expect(pkg.scenarioHint).toBe('acknowledgment');
+  });
+
+  it('farewell closer after a date suggestion does not re-run availability', async () => {
+    const parser = makeParser({ intent: 'acknowledgment' });
+    const availability = makeAvailability();
+    const composer = makeComposer();
+    const conversation = makeConversation({
+      getState: jest.fn().mockResolvedValue({
+        status: 'bot',
+        lifecycleStatus: 'Responded',
+        lastIntent: 'awaiting_dates_confirmation',
+        pendingDates: {
+          checkIn: '2027-09-05',
+          checkOut: '2027-09-12',
+          guests: null,
+        },
+        customerName: null,
+      }),
+    });
+    const handler = build({ parser, availability, composer, conversation });
+
+    await handler.handle({ from: CUSTOMER, text: 'ok thanks, bye' });
+
+    expect(availability.isRangeAvailable).not.toHaveBeenCalled();
+    const [pkg] = composerCalls(composer);
+    expect(pkg.scenarioHint).toBe('acknowledgment');
+  });
+
+  it('short affirmative after a date suggestion still re-runs availability', async () => {
+    const parser = makeParser({ intent: 'acknowledgment' });
+    const availability = makeAvailability();
+    const conversation = makeConversation({
+      getState: jest.fn().mockResolvedValue({
+        status: 'bot',
+        lifecycleStatus: 'Responded',
+        lastIntent: 'awaiting_dates_confirmation',
+        pendingDates: {
+          checkIn: '2027-09-05',
+          checkOut: '2027-09-12',
+          guests: null,
+        },
+        customerName: null,
+      }),
+    });
+    const handler = build({ parser, availability, conversation });
+
+    await handler.handle({ from: CUSTOMER, text: 'yes please' });
+
+    expect(availability.isRangeAvailable).toHaveBeenCalled();
+  });
 });
 
 describe('MessageHandlerService.handle — month query', () => {

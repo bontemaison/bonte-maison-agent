@@ -38,6 +38,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WEBSITE_URL = 'www.bontemaison.com';
 const SCENARIOS_WITH_WEBSITE = new Set(['general_info']);
 const SCENARIOS_SKIP_WEBSITE_LINK = new Set(['greeting']);
+// Conversation-ending intents. Two closers in a row = the guest is done;
+// replying again just triggers another "bye" and an endless loop.
+const CLOSER_INTENTS = new Set<string>(['acknowledgment', 'polite_close']);
+const FAREWELL_RE =
+  /\b(bye|goodbye|good\s?night|see\s+(you|ya)|take\s+care|cheers|ciao|that'?s\s+(it|all))\b/i;
 
 type IncomingMessage = { from: string; text: string; profileName?: string };
 
@@ -189,7 +194,7 @@ export class MessageHandlerService {
         return;
       }
 
-      await this.route(msg.from, parsed, merged, history, previousIntent);
+      await this.route(msg.from, msg.text, parsed, merged, history, previousIntent);
     } catch (err) {
       const error = (err as Error).message;
       this.logger.error('conversation', 'message handling failed', {
@@ -208,22 +213,27 @@ export class MessageHandlerService {
 
   private async route(
     from: string,
+    rawText: string,
     parsed: ParseResult,
     merged: MergedIntent,
     history: HistoryMessage[],
     previousIntent: string | null,
   ): Promise<void> {
     const name = merged.customerName ?? '';
+    const isFarewell =
+      CLOSER_INTENTS.has(parsed.intent) && FAREWELL_RE.test(rawText);
 
     // After the bot suggested Sunday-to-Sunday dates via dates_not_sunday_to_sunday
     // (or minimum_stay_not_met), a short affirmative ("yes please", "ok", "yes is
     // it available then") is the customer confirming those suggested dates. Run
     // availability for the pending Sun dates — not booking_confirmed_handoff,
-    // not the same not-Sunday template again.
+    // not the same not-Sunday template again. A farewell ("thanks, bye") is the
+    // customer leaving, not confirming — let it fall through to the closer case.
     if (
       previousIntent === 'awaiting_dates_confirmation' &&
       merged.checkIn &&
       merged.checkOut &&
+      !isFarewell &&
       (parsed.intent === 'acknowledgment' ||
         parsed.intent === 'booking_confirmation' ||
         parsed.intent === 'availability_inquiry' ||
@@ -314,21 +324,21 @@ export class MessageHandlerService {
         return;
 
       case 'acknowledgment':
-        if (previousIntent === 'acknowledgment') {
-          this.logger.info('conversation', 'silent drop: repeat acknowledgment', {
+      case 'polite_close':
+        if (previousIntent !== null && CLOSER_INTENTS.has(previousIntent)) {
+          this.logger.info('conversation', 'silent drop: repeat closer', {
             from,
+            intent: parsed.intent,
           });
           return;
         }
+        // A farewell gets a plain warm goodbye — never the polite_close
+        // hold-offer nudge ("happy to hold dates while you decide").
         await this.composeOrFallback(from, parsed, merged, history, {
-          scenario: 'acknowledgment',
-          fallbackKey: 'acknowledgment_reply',
-        });
-        return;
-
-      case 'polite_close':
-        await this.composeOrFallback(from, parsed, merged, history, {
-          scenario: 'polite_close',
+          scenario:
+            parsed.intent === 'polite_close' && !isFarewell
+              ? 'polite_close'
+              : 'acknowledgment',
           fallbackKey: 'acknowledgment_reply',
         });
         return;
