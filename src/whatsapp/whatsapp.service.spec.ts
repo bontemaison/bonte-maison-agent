@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { ConversationService } from '../conversation/conversation.service';
 import { LoggerService } from '../logger/logger.service';
 import { WhatsAppProvider } from './providers/provider.interface';
-import { WhatsappService } from './whatsapp.service';
+import { computeTypingDelayMs, WhatsappService } from './whatsapp.service';
 
 const makeProvider = (): jest.Mocked<WhatsAppProvider> => ({
   sendMessage: jest.fn().mockResolvedValue({}),
@@ -44,12 +44,50 @@ const makeServiceNoToken = (provider: WhatsAppProvider): WhatsappService =>
   new WhatsappService(provider, makeLogger(), makeConversation(), makeConfig(undefined));
 
 describe('WhatsappService', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+  });
+  afterEach(() => jest.useRealTimers());
+
+  // sendMessage sleeps through a typing delay before hitting the provider;
+  // run all fake timers so the send promise can settle.
+  const flushSend = async (p: Promise<void>): Promise<void> => {
+    await jest.runAllTimersAsync();
+    await p;
+  };
+
+  describe('computeTypingDelayMs', () => {
+    it('clamps short replies to the minimum delay', () => {
+      expect(computeTypingDelayMs('Thanks, Jim')).toBe(2000);
+    });
+
+    it('scales with reply length between the clamps', () => {
+      expect(computeTypingDelayMs('a'.repeat(100))).toBe(5000);
+    });
+
+    it('clamps long replies to the maximum delay', () => {
+      expect(computeTypingDelayMs('a'.repeat(1000))).toBe(10000);
+    });
+  });
 
   describe('sendMessage', () => {
     it('delegates to the provider when conversation is in bot mode', async () => {
       const provider = makeProvider();
-      await makeService(provider).sendMessage('628', 'hello');
+      await flushSend(makeService(provider).sendMessage('628', 'hello'));
+      expect(provider.sendMessage).toHaveBeenCalledWith('628', 'hello');
+    });
+
+    it('waits a length-scaled typing delay before handing to the provider', async () => {
+      const provider = makeProvider();
+      const send = makeService(provider).sendMessage('628', 'hello');
+      const delay = computeTypingDelayMs('hello');
+
+      await jest.advanceTimersByTimeAsync(delay - 1);
+      expect(provider.sendMessage).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(1);
+      await send;
       expect(provider.sendMessage).toHaveBeenCalledWith('628', 'hello');
     });
 
@@ -70,7 +108,7 @@ describe('WhatsappService', () => {
 
     it('bypasses the pause check when override=true', async () => {
       const provider = makeProvider();
-      await makeService(provider, false).sendMessage('628', 'hi', { override: true });
+      await flushSend(makeService(provider, false).sendMessage('628', 'hi', { override: true }));
       expect(provider.sendMessage).toHaveBeenCalled();
     });
   });
@@ -139,7 +177,7 @@ describe('WhatsappService', () => {
       provider.sendMessage.mockResolvedValue({ id: 'msg-1' });
       const service = makeService(provider);
 
-      await service.sendMessage('628', 'hi');
+      await flushSend(service.sendMessage('628', 'hi'));
 
       expect(service.wasRecentlySentByBot('msg-1')).toBe(true);
     });

@@ -19,6 +19,21 @@ export type SendOptions = { override?: boolean };
 const SENT_ID_TTL_MS = 10 * 60 * 1000;
 const SENT_ID_MAX = 1000;
 
+// Human-like typing delay: instant replies feel robotic (Jim's feedback), so
+// sends wait in proportion to reply length — short replies stay snappy, long
+// quotes take longer, like a person typing. Applies to session sends only;
+// sendTemplate (HSM, owner notifications) stays immediate.
+const TYPING_MS_PER_CHAR = 50;
+const TYPING_DELAY_MIN_MS = 2000;
+const TYPING_DELAY_MAX_MS = 10000;
+
+export function computeTypingDelayMs(text: string): number {
+  return Math.min(
+    TYPING_DELAY_MAX_MS,
+    Math.max(TYPING_DELAY_MIN_MS, text.length * TYPING_MS_PER_CHAR),
+  );
+}
+
 @Injectable()
 export class WhatsappService {
   private readonly sentIds = new Map<string, number>();
@@ -35,6 +50,9 @@ export class WhatsappService {
       this.logger.warn('whatsapp', 'skipped send: conversation not in bot mode', { to });
       return;
     }
+    const delayMs = computeTypingDelayMs(text);
+    this.logger.debug('whatsapp', 'typing delay before send', { to, delayMs });
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
     const result = await this.provider.sendMessage(to, text);
     if (result?.id) this.markSent(result.id);
   }

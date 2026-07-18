@@ -76,6 +76,8 @@ All Airtable ops go through `AirtableService`. Never import Airtable SDK directl
 ### WhatsApp sending
 All outbound messages through `WhatsappService.sendMessage()`. Logs every send, respects pause state, handles retries.
 
+Session sends wait a human-like typing delay scaled by reply length (50ms/char, clamped 2–10s — constants in `whatsapp.service.ts`) so replies don't feel instant/robotic. `sendTemplate` (HSM, owner notifications) sends immediately.
+
 ### Logging
 Use `LoggerService`, not `console.log`. Every log specifies module tag + level:
 
