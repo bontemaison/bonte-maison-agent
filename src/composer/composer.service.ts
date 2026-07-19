@@ -138,7 +138,24 @@ export class ComposerService {
   }
 
   async compose(pkg: CompositionPackage): Promise<ComposeResult> {
-    const userContent = this.buildUserContent(pkg);
+    const first = await this.attempt(pkg);
+    if (first.ok || first.reason === 'api_error') return first;
+
+    // One corrective retry: feed the rejected draft and the rule it broke
+    // back to the model. A single tone slip ("taken" instead of "reserved")
+    // shouldn't dump an otherwise correct reply to a generic fallback
+    // template.
+    this.logger.warn('templates', 'composer retrying after rejection', {
+      reason: first.reason,
+    });
+    return this.attempt(pkg, { rejected: first.raw, reason: first.reason });
+  }
+
+  private async attempt(
+    pkg: CompositionPackage,
+    correction?: { rejected: string; reason: string },
+  ): Promise<ComposeResult> {
+    const userContent = this.buildUserContent(pkg, correction);
 
     let raw: string;
     try {
@@ -183,7 +200,10 @@ export class ComposerService {
       .replace(/^\s*,\s*/, '');
   }
 
-  private buildUserContent(pkg: CompositionPackage): string {
+  private buildUserContent(
+    pkg: CompositionPackage,
+    correction?: { rejected: string; reason: string },
+  ): string {
     const parts: string[] = [];
 
     if (pkg.scenarioHint) {
@@ -202,7 +222,9 @@ export class ComposerService {
       const factLines = pkg.facts
         .map((f) => `- ${f.key}: ${f.text}`)
         .join('\n');
-      parts.push(`Facts (use these verbatim or paraphrased; do NOT invent):\n${factLines}`);
+      parts.push(
+        `Facts (use these verbatim or paraphrased; do NOT invent):\n${factLines}`,
+      );
     } else {
       parts.push(
         'Facts: none. If the message asks a factual question, do not invent — keep the reply short and offer to come back with the answer.',
@@ -253,11 +275,15 @@ export class ComposerService {
     if (pkg.history.length > 0) {
       const recent = pkg.history.slice(-10);
       const transcript = recent
-        .map(
-          (h) => `${h.role === 'customer' ? 'Customer' : 'Jim'}: ${h.text}`,
-        )
+        .map((h) => `${h.role === 'customer' ? 'Customer' : 'Jim'}: ${h.text}`)
         .join('\n');
       parts.push(`Recent conversation:\n${transcript}`);
+    }
+
+    if (correction) {
+      parts.push(
+        `Your previous draft was rejected by an automated rule check (reason code: ${correction.reason}). Rewrite the reply so it fully complies with EVERY rule above, keeping the same substance and facts.\n\nRejected draft:\n${correction.rejected}`,
+      );
     }
 
     parts.push("Write Jim's WhatsApp reply now. Plain text only.");

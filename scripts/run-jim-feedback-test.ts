@@ -120,23 +120,28 @@ const SCENARIOS: Scenario[] = [
   },
 
   // ── Feedback 3: year_2026_redirect wording ────────────────────────────
+  // NOTE 2026-07: originally asked about June 2026, but once June passed the
+  // parser (correctly) rolls a past month to June 2027, so the 2026 redirect
+  // never fires. August 2026 is fully booked in the iCal, which the redirect
+  // now requires — since Jim's 2026-07 feedback the flag alone isn't trusted:
+  // the redirect only fires when the calendar really has nothing.
   {
     id: 'year-2026-redirect-comma',
-    title: '2026 redirect must read "for June I\'m afraid" (no comma after "June")',
+    title: '2026 redirect must read "for August I\'m afraid" (no comma after month)',
     feedbackRef: 'Feedback #3',
     turns: [
       {
-        customer: 'Hi, what weeks do you have in June 2026?',
+        customer: 'Hi, what weeks do you have in August 2026?',
         mustInclude: [
           /2026/,
           /(fully (booked|reserved))/i,
-          /june i'?m afraid/i,
+          /august i'?m afraid/i,
         ],
         mustNotInclude: [
-          /for june, i'?m afraid/i,
+          /for august, i'?m afraid/i,
         ],
         notes:
-          'year_2026_redirect template currently renders "fully booked for June, I\'m afraid" — remove the comma before "I\'m afraid".',
+          'year_2026_redirect template must not have a comma before "I\'m afraid".',
       },
     ],
   },

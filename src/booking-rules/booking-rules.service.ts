@@ -46,13 +46,6 @@ export class BookingRulesService {
   ) {}
 
   async validate(checkIn: Date, checkOut: Date): Promise<RulesValidation> {
-    if (
-      checkIn.getUTCFullYear() === 2026 &&
-      (await this.getBooleanFlag(YEAR_2026_FULLY_BOOKED_KEY))
-    ) {
-      return { pass: false, reason: 'year_2026_redirect' };
-    }
-
     if (checkIn.getUTCDay() !== 0 || checkOut.getUTCDay() !== 0) {
       const suggestedCheckIn = this.nextSunday(checkIn);
       const suggestedCheckOut = new Date(
@@ -87,6 +80,18 @@ export class BookingRulesService {
       LONG_STAY_MONTHS.has(checkIn.getUTCMonth())
     ) {
       return { pass: false, reason: 'long_stay_manual' };
+    }
+
+    // Checked LAST, after the date-shape rules, so a year_2026_redirect
+    // result always carries valid Sunday-to-Sunday dates. The orchestrator
+    // uses that to double-check the flag against the live iCal (the flag can
+    // go stale when a cancellation reopens weeks) and fall through to a real
+    // quote when the calendar disagrees.
+    if (
+      checkIn.getUTCFullYear() === 2026 &&
+      (await this.getBooleanFlag(YEAR_2026_FULLY_BOOKED_KEY))
+    ) {
+      return { pass: false, reason: 'year_2026_redirect' };
     }
 
     return { pass: true };
@@ -182,9 +187,13 @@ export class BookingRulesService {
       );
       const existing = rows[0];
       if (existing) {
-        await this.airtable.update<BookingRulesFields>('BookingRules', existing.id, {
-          value,
-        });
+        await this.airtable.update<BookingRulesFields>(
+          'BookingRules',
+          existing.id,
+          {
+            value,
+          },
+        );
         return;
       }
       await this.airtable.create<BookingRulesFields>('BookingRules', {

@@ -22,11 +22,10 @@ import { MessageLogService } from '../messagelog/messagelog.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   HistoryMessage,
-  Intent,
   ParseResult,
   ParserService,
 } from '../parser/parser.service';
-import { PricingService } from '../pricing/pricing.service';
+import { PricingService, Quote } from '../pricing/pricing.service';
 import { TemplatesService, TemplateVars } from '../templates/templates.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 
@@ -82,10 +81,14 @@ export class MessageHandlerService {
   async handleOwnerTakeover(phone: string): Promise<void> {
     if (phone === this.ownerPhone) return; // owner messaging themselves — ignore
 
-    this.logger.info('conversation', 'human takeover detected — pausing bot for conversation', {
-      phone,
-      windowMinutes: TAKEOVER_WINDOW_MIN,
-    });
+    this.logger.info(
+      'conversation',
+      'human takeover detected — pausing bot for conversation',
+      {
+        phone,
+        windowMinutes: TAKEOVER_WINDOW_MIN,
+      },
+    );
 
     try {
       await this.conversation.setStatus(phone, 'human', {
@@ -194,7 +197,14 @@ export class MessageHandlerService {
         return;
       }
 
-      await this.route(msg.from, msg.text, parsed, merged, history, previousIntent);
+      await this.route(
+        msg.from,
+        msg.text,
+        parsed,
+        merged,
+        history,
+        previousIntent,
+      );
     } catch (err) {
       const error = (err as Error).message;
       this.logger.error('conversation', 'message handling failed', {
@@ -271,8 +281,23 @@ export class MessageHandlerService {
         // silently re-run availability on the old dates — confirm them first so
         // the customer can either re-affirm ("yes please" → handled by the
         // awaiting_dates_confirmation guard above) or share new dates.
-        if (!parsed.checkIn && !parsed.checkOut && merged.checkIn && merged.checkOut) {
+        if (
+          !parsed.checkIn &&
+          !parsed.checkOut &&
+          merged.checkIn &&
+          merged.checkOut
+        ) {
           await this.sendDateReconfirmation(from, merged);
+          return;
+        }
+        // One date but not a full range ("4/5 days over April 23rd, flexible
+        // on check-in") — resolve the Sunday week(s) around the target and
+        // answer from the iCal instead of asking the guest to guess dates.
+        if (
+          (merged.checkIn && !merged.checkOut) ||
+          (!merged.checkIn && merged.checkOut)
+        ) {
+          await this.handlePartialDates(from, parsed, merged, history);
           return;
         }
         if (!merged.checkIn || !merged.checkOut) {
@@ -378,19 +403,38 @@ export class MessageHandlerService {
     if (!merged.checkIn || !merged.checkOut) return;
     const name = merged.customerName ?? '';
 
-    const rule = await this.bookingRules.validate(merged.checkIn, merged.checkOut);
+    const rule = await this.bookingRules.validate(
+      merged.checkIn,
+      merged.checkOut,
+    );
     if (!rule.pass) {
       switch (rule.reason) {
-        case 'year_2026_redirect':
-          await this.sendTemplate(from, 'year_2026_redirect', {
-            name,
-            month_phrase: this.monthPhraseForDate(merged.checkIn),
-          });
-          return;
+        case 'year_2026_redirect': {
+          // The 2026 flag can go stale (a cancellation reopens weeks). The
+          // calendar is the truth: redirect only when the requested week
+          // isn't actually free, otherwise fall through and quote it.
+          if (
+            !(await this.isWeekActuallyFree(merged.checkIn, merged.checkOut))
+          ) {
+            await this.sendTemplate(from, 'year_2026_redirect', {
+              name,
+              month_phrase: this.monthPhraseForDate(merged.checkIn),
+            });
+            return;
+          }
+          this.logger.warn(
+            'booking-rules',
+            'year flagged fully booked but requested week is free in iCal — quoting it',
+            { from, checkIn: this.isoDate(merged.checkIn) },
+          );
+          break;
+        }
         case 'not_sunday':
           await this.sendTemplate(from, 'dates_not_sunday_to_sunday', {
             name,
-            suggested_check_in: this.formatDate(new Date(rule.suggestedCheckIn)),
+            suggested_check_in: this.formatDate(
+              new Date(rule.suggestedCheckIn),
+            ),
             suggested_check_out: this.formatDate(
               new Date(rule.suggestedCheckOut),
             ),
@@ -404,7 +448,9 @@ export class MessageHandlerService {
         case 'min_stay':
           await this.sendTemplate(from, 'minimum_stay_not_met', {
             name,
-            suggested_check_in: this.formatDate(new Date(rule.suggestedCheckIn)),
+            suggested_check_in: this.formatDate(
+              new Date(rule.suggestedCheckIn),
+            ),
             suggested_check_out: this.formatDate(
               new Date(rule.suggestedCheckOut),
             ),
@@ -426,7 +472,10 @@ export class MessageHandlerService {
     const held = await this.holds.hasOverlap(merged.checkIn, merged.checkOut);
     const icalOk = held
       ? false
-      : await this.availability.isRangeAvailable(merged.checkIn, merged.checkOut);
+      : await this.availability.isRangeAvailable(
+          merged.checkIn,
+          merged.checkOut,
+        );
 
     const datesLabel = `${this.isoDate(merged.checkIn)} → ${this.isoDate(merged.checkOut)}`;
 
@@ -473,10 +522,14 @@ export class MessageHandlerService {
       try {
         await this.followUps.schedule(from);
       } catch (err) {
-        this.logger.warn('follow-ups', 'schedule after pending-pricing failed', {
-          from,
-          error: (err as Error).message,
-        });
+        this.logger.warn(
+          'follow-ups',
+          'schedule after pending-pricing failed',
+          {
+            from,
+            error: (err as Error).message,
+          },
+        );
       }
       return;
     }
@@ -492,7 +545,10 @@ export class MessageHandlerService {
     let combined = quoteText;
     if (this.shouldAppendHarvest(merged.checkIn, merged.checkOut)) {
       try {
-        const note = await this.templates.render('september_wine_harvest_note', {});
+        const note = await this.templates.render(
+          'september_wine_harvest_note',
+          {},
+        );
         combined = this.insertBeforeSignOff(combined, note);
       } catch (err) {
         this.logger.warn('templates', 'wine harvest append failed', {
@@ -529,20 +585,34 @@ export class MessageHandlerService {
       return;
     }
 
-    const rule = await this.bookingRules.validate(merged.checkIn, merged.checkOut);
+    const rule = await this.bookingRules.validate(
+      merged.checkIn,
+      merged.checkOut,
+    );
     if (!rule.pass) {
       switch (rule.reason) {
-        case 'year_2026_redirect':
-          await this.sendTemplate(from, 'year_2026_redirect', {
-            name,
-            month_phrase: this.monthPhraseForDate(merged.checkIn),
-          });
-          return;
+        case 'year_2026_redirect': {
+          // Same stale-flag guard as handleAvailability: iCal wins.
+          if (
+            !(await this.isWeekActuallyFree(merged.checkIn, merged.checkOut))
+          ) {
+            await this.sendTemplate(from, 'year_2026_redirect', {
+              name,
+              month_phrase: this.monthPhraseForDate(merged.checkIn),
+            });
+            return;
+          }
+          break;
+        }
         case 'not_sunday':
           await this.sendTemplate(from, 'dates_not_sunday_to_sunday', {
             name,
-            suggested_check_in: this.formatDate(new Date(rule.suggestedCheckIn)),
-            suggested_check_out: this.formatDate(new Date(rule.suggestedCheckOut)),
+            suggested_check_in: this.formatDate(
+              new Date(rule.suggestedCheckIn),
+            ),
+            suggested_check_out: this.formatDate(
+              new Date(rule.suggestedCheckOut),
+            ),
           });
           await this.parkSuggestedDates(
             from,
@@ -553,8 +623,12 @@ export class MessageHandlerService {
         case 'min_stay':
           await this.sendTemplate(from, 'minimum_stay_not_met', {
             name,
-            suggested_check_in: this.formatDate(new Date(rule.suggestedCheckIn)),
-            suggested_check_out: this.formatDate(new Date(rule.suggestedCheckOut)),
+            suggested_check_in: this.formatDate(
+              new Date(rule.suggestedCheckIn),
+            ),
+            suggested_check_out: this.formatDate(
+              new Date(rule.suggestedCheckOut),
+            ),
           });
           await this.parkSuggestedDates(
             from,
@@ -573,7 +647,10 @@ export class MessageHandlerService {
     const held = await this.holds.hasOverlap(merged.checkIn, merged.checkOut);
     const icalOk = held
       ? false
-      : await this.availability.isRangeAvailable(merged.checkIn, merged.checkOut);
+      : await this.availability.isRangeAvailable(
+          merged.checkIn,
+          merged.checkOut,
+        );
 
     if (!icalOk) {
       const datesLabel = `${this.isoDate(merged.checkIn)} → ${this.isoDate(merged.checkOut)}`;
@@ -593,7 +670,11 @@ export class MessageHandlerService {
       return;
     }
 
-    const hold = await this.holds.createHold(from, merged.checkIn, merged.checkOut);
+    const hold = await this.holds.createHold(
+      from,
+      merged.checkIn,
+      merged.checkOut,
+    );
     await this.sendTemplate(from, 'hold_confirmed', {
       name,
       check_in: this.formatDate(merged.checkIn),
@@ -646,13 +727,6 @@ export class MessageHandlerService {
       years.map((y) => this.bookingRules.isYearFullyBooked(y)),
     );
     const allBlocked = years.length > 0 && yearBlocks.every(Boolean);
-    if (allBlocked) {
-      await this.sendTemplate(from, 'year_2026_redirect', {
-        name,
-        month_phrase: this.monthQueryPhrase(parsed),
-      });
-      return;
-    }
 
     const facts: CompositionFact[] = [];
     let summary: WeekWithPrice[] = [];
@@ -671,6 +745,24 @@ export class MessageHandlerService {
       );
       periodLabel = `${this.formatMonthYear(parsed.monthRangeQuery.start)}–${this.formatMonthYear(parsed.monthRangeQuery.end)}`;
       periodPreposition = 'across';
+    }
+
+    // The year-fully-booked flag can go stale (a cancellation reopens
+    // weeks). The calendar is the truth: only redirect when the iCal really
+    // has nothing to offer for the asked period.
+    if (allBlocked && summary.length === 0) {
+      await this.sendTemplate(from, 'year_2026_redirect', {
+        name,
+        month_phrase: this.monthQueryPhrase(parsed),
+      });
+      return;
+    }
+    if (allBlocked && summary.length > 0) {
+      this.logger.warn(
+        'booking-rules',
+        'year flagged fully booked but iCal shows free weeks — listing from iCal',
+        { from, periodLabel, weeks: summary.length },
+      );
     }
 
     if (summary.length === 0) {
@@ -706,6 +798,131 @@ export class MessageHandlerService {
     });
   }
 
+  /**
+   * The guest gave a target date but not a full Sunday-to-Sunday range
+   * ("4/5 days over April 23rd, flexible on check-in"). Resolve the week
+   * containing the target plus the following week, check both against holds
+   * and the iCal, and hand the composer pre-checked availability facts so it
+   * states the real calendar status instead of guessing. (Jim's 2026-07
+   * feedback: the bot suggested weeks that were booked and invented
+   * weekday/date pairs.)
+   */
+  private async handlePartialDates(
+    from: string,
+    parsed: ParseResult,
+    merged: MergedIntent,
+    history: HistoryMessage[],
+  ): Promise<void> {
+    const target = merged.checkIn
+      ? merged.checkIn
+      : new Date((merged.checkOut as Date).getTime() - DAY_MS);
+    const firstSunday = this.sundayOnOrBefore(target);
+    const candidates = [
+      firstSunday,
+      new Date(firstSunday.getTime() + 7 * DAY_MS),
+    ];
+
+    const checked: Array<{
+      checkIn: Date;
+      checkOut: Date;
+      free: boolean;
+      quote: Quote | null;
+    }> = [];
+    for (const checkIn of candidates) {
+      const checkOut = new Date(checkIn.getTime() + 7 * DAY_MS);
+      const free = await this.isWeekActuallyFree(checkIn, checkOut);
+      const quote = free
+        ? await this.helpers.getPricingForDateRange(checkIn, checkOut)
+        : null;
+      checked.push({ checkIn, checkOut, free, quote });
+    }
+
+    const lines = checked.map((c) => {
+      const range = `${this.formatDate(c.checkIn)} to ${this.formatDate(c.checkOut)}`;
+      if (c.free && c.quote && !c.quote.usedBase) {
+        return `${range}: AVAILABLE at ${this.formatPrice(c.quote.total)} for the week.`;
+      }
+      if (c.free) {
+        return `${range}: AVAILABLE, but the exact rate is still to be confirmed. NEVER invent a price for it.`;
+      }
+      return `${range}: RESERVED, not available.`;
+    });
+
+    const first = checked[0];
+    const freeWeek = checked.find((c) => c.free);
+    const name = merged.customerName ?? '';
+
+    await this.composeOrFallback(from, parsed, merged, history, {
+      scenario: 'partial_dates',
+      // If both weeks are reserved we already know the answer — the safe
+      // fallback is the "reserved" template, not a re-ask for dates.
+      fallbackKey: freeWeek
+        ? 'dates_unclear_ask_clarify'
+        : 'availability_no_priority',
+      fallbackVars: freeWeek
+        ? undefined
+        : {
+            name_comma: name ? `, ${name}` : '',
+            check_in: this.formatDate(first.checkIn),
+            check_out: this.formatDate(first.checkOut),
+            month: this.monthName(first.checkIn),
+          },
+      extraFacts: [
+        {
+          key: 'requested_week_availability',
+          text:
+            `The guest's target date (${this.formatDate(target)}) falls in the first week below. ` +
+            `Calendar status for the Sunday-to-Sunday weeks around it, already checked against the live calendar:\n${lines.join('\n')}`,
+        },
+      ],
+    });
+
+    const datesLabel = `${this.isoDate(first.checkIn)} → ${this.isoDate(first.checkOut)}`;
+    if (freeWeek) {
+      await this.recordQuoteSafe(
+        from,
+        datesLabel,
+        freeWeek.quote && !freeWeek.quote.usedBase ? freeWeek.quote.total : 0,
+        'available',
+      );
+      // Park the free week so a "yes please" next turn runs the full
+      // availability + quote flow on it via awaiting_dates_confirmation.
+      await this.parkSuggestedDates(
+        from,
+        this.isoDate(freeWeek.checkIn),
+        this.isoDate(freeWeek.checkOut),
+      );
+      try {
+        await this.followUps.schedule(from);
+      } catch (err) {
+        this.logger.warn('follow-ups', 'schedule after partial-dates failed', {
+          from,
+          error: (err as Error).message,
+        });
+      }
+      return;
+    }
+    await this.recordQuoteSafe(from, datesLabel, 0, 'unavailable');
+    await this.notifications.notifyOwnerAboutConversation(
+      from,
+      'dates_unavailable',
+      {
+        intent: parsed.intent,
+        extra: { partialDates: true, target: this.isoDate(target) },
+      },
+    );
+  }
+
+  /** Holds + iCal in one check — true when the week can actually be sold. */
+  private async isWeekActuallyFree(
+    checkIn: Date,
+    checkOut: Date,
+  ): Promise<boolean> {
+    const held = await this.holds.hasOverlap(checkIn, checkOut);
+    if (held) return false;
+    return this.availability.isRangeAvailable(checkIn, checkOut);
+  }
+
   private async composeOrFallback(
     from: string,
     parsed: ParseResult,
@@ -714,6 +931,7 @@ export class MessageHandlerService {
     options: {
       scenario: string;
       fallbackKey: string;
+      fallbackVars?: TemplateVars;
       knowledgeFragments?: Fragment[];
       extraFacts?: CompositionFact[];
     },
@@ -743,14 +961,18 @@ export class MessageHandlerService {
       fallbackKey: options.fallbackKey,
       reason: result.reason,
     });
-    await this.notifications.notifyOwnerAboutConversation(from, 'composer_fallback', {
-      intent: parsed.intent,
-      extra: { reason: result.reason, scenario: options.scenario },
-    });
+    await this.notifications.notifyOwnerAboutConversation(
+      from,
+      'composer_fallback',
+      {
+        intent: parsed.intent,
+        extra: { reason: result.reason, scenario: options.scenario },
+      },
+    );
     await this.sendTemplate(
       from,
       options.fallbackKey,
-      { name: merged.customerName ?? '' },
+      { name: merged.customerName ?? '', ...(options.fallbackVars ?? {}) },
       { appendWebsite: !skipWebsiteLink },
     );
   }
@@ -766,7 +988,8 @@ export class MessageHandlerService {
     },
   ): Promise<CompositionPackage> {
     const knowledge =
-      options.knowledgeFragments ?? (await this.fetchKnowledgeFragmentsSafe(parsed.topicKeys));
+      options.knowledgeFragments ??
+      (await this.fetchKnowledgeFragmentsSafe(parsed.topicKeys));
     const openers = await this.fetchByCategorySafe('opener');
     const nudges = await this.fetchByCategorySafe('nudge');
 
@@ -779,8 +1002,7 @@ export class MessageHandlerService {
     if (this.touchesSeptember(parsed, merged)) {
       facts.push({
         key: 'season_september',
-        text:
-          "September is the start of the wine harvest in this part of the Dordogne. Vineyards are busy, evenings are usually still warm, and there are local food and wine events around. Mention this once, naturally, where it fits.",
+        text: 'September is the start of the wine harvest in this part of the Dordogne. Vineyards are busy, evenings are usually still warm, and there are local food and wine events around. Mention this once, naturally, where it fits.',
       });
     }
 
@@ -858,7 +1080,8 @@ export class MessageHandlerService {
         this.knowledgeBase.listTopics().catch(() => []),
       ]);
       const examplesByKey = new Map<string, string>();
-      for (const t of kbTopics) examplesByKey.set(t.topicKey, t.questionExamples);
+      for (const t of kbTopics)
+        examplesByKey.set(t.topicKey, t.questionExamples);
       const allKeys = new Set<string>(examplesByKey.keys());
       for (const f of fragments) {
         for (const t of f.topicKeys) allKeys.add(t);
@@ -932,8 +1155,11 @@ export class MessageHandlerService {
       }
       await this.conversation.setGlobalPaused(true);
       await this.notifications.notifyOwner(
-        "Bot paused.\nNo conversations will get a reply until you send /resume.",
-        { reason: 'owner_command', extra: { command: 'pause', scope: 'global' } },
+        'Bot paused.\nNo conversations will get a reply until you send /resume.',
+        {
+          reason: 'owner_command',
+          extra: { command: 'pause', scope: 'global' },
+        },
       );
       return;
     }
@@ -953,7 +1179,7 @@ export class MessageHandlerService {
       }
       await this.conversation.setGlobalPaused(false);
       await this.notifications.notifyOwner(
-        "Bot back on.\nReplying to conversations again.",
+        'Bot back on.\nReplying to conversations again.',
         {
           reason: 'owner_command',
           extra: { command: 'resume', scope: 'global' },
@@ -965,7 +1191,7 @@ export class MessageHandlerService {
     if (cmd.command === 'release') {
       if (!cmd.phone) {
         await this.notifications.notifyOwner(
-          "/release needs a phone number.\nExample: /release 447712345678",
+          '/release needs a phone number.\nExample: /release 447712345678',
           { reason: 'owner_command', extra: { command: 'release' } },
         );
         return;
@@ -1203,6 +1429,14 @@ export class MessageHandlerService {
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
+  private sundayOnOrBefore(d: Date): Date {
+    const result = new Date(
+      Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+    );
+    result.setUTCDate(result.getUTCDate() - result.getUTCDay());
+    return result;
+  }
+
   private isoDate(d: Date): string {
     return d.toISOString().slice(0, 10);
   }
@@ -1315,6 +1549,8 @@ export class MessageHandlerService {
         return "The customer is winding down ('I'll think about it', 'cool that sounds nice', 'let me check with my partner'). Reply warmly with no pressure. IMPORTANT: if the recent history shows we've just listed availability or quoted a price, weave in a single short hold offer — e.g. 'happy to hold one of those weeks briefly while you decide'. If there's no recent quote/availability in history, just a warm acknowledgement is enough.";
       case 'month_query':
         return "You're presenting availability (or lack of it) for a month or month range. STYLE RULES (tight, punchy, NOT a sales pitch):\n\n1) Open with one short sentence stating what's available, e.g. 'July 2027 has three weeks available right now.'\n2) Then list each available week ON ITS OWN LINE, with a blank line before and after the list. Format: '11 July to 18 July at £4,995.' One week per line. Do NOT chain weeks together in a single sentence with commas or semicolons. Do NOT use bullets or dashes — just plain lines separated by newlines.\n3) After the list, end with a single short question on its own line, e.g. 'Which of those works best for you?' If the guest has signalled interest, you may add one short hold-offer sentence; otherwise skip it.\n\nExample shape:\n\nJuly 2027 has three weeks available right now.\n\n11 July to 18 July at £4,995.\n18 July to 25 July at £4,995.\n25 July to 1 August at £4,995.\n\nWhich of those works best for you? Happy to hold a week for a few days while you have a think.\n\nDrop filler phrases like 'full school holiday feel', 'real atmosphere', 'often still'. Do NOT list weeks for a period the guest didn't ask about.\n\nIf a week is shown as '(rate to be confirmed)' instead of a price, list it on its own line the same way and say the exact rate will be confirmed, but NEVER make up a number for it.";
+      case 'partial_dates':
+        return "The guest gave a rough target date or a shorter stay (e.g. '4 or 5 days around the 23rd') rather than exact Sunday-to-Sunday dates. The requested_week_availability fact contains the REAL calendar status for the Sunday-to-Sunday week(s) around their target, already checked. Briefly explain the house books Sunday to Sunday with a one-week minimum, then state the status exactly as the fact gives it: if a week is AVAILABLE with a price, offer it with its dates and price; if the weeks are RESERVED, say those dates are reserved, plainly and warmly, and do NOT suggest or hint at any other dates. Copy dates verbatim from the fact. NEVER write any weekday/date pairing that is not in the fact, and never say you will 'check availability and come back', the calendar has already been checked.";
       case 'correction':
         return "The customer is correcting or pushing back on YOUR previous reply. Apologise briefly for the misunderstanding and ask what they'd like to know. Don't escalate.";
       case 'unclear':

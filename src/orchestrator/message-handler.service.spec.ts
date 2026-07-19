@@ -1,6 +1,9 @@
 import { ConfigService } from '@nestjs/config';
 import { AvailabilityService } from '../availability/availability.service';
-import { BookingRulesService, RulesValidation } from '../booking-rules/booking-rules.service';
+import {
+  BookingRulesService,
+  RulesValidation,
+} from '../booking-rules/booking-rules.service';
 import { ComposerService } from '../composer/composer.service';
 import { ConversationService } from '../conversation/conversation.service';
 import { FollowUpsService } from '../follow-ups/follow-ups.service';
@@ -81,7 +84,9 @@ const makeTemplates = (text = 'rendered'): TemplatesService =>
   }) as unknown as TemplatesService;
 
 const makeComposer = (
-  result: { ok: true; text: string } | { ok: false; reason: string; raw: string } = {
+  result:
+    | { ok: true; text: string }
+    | { ok: false; reason: string; raw: string } = {
     ok: true,
     text: 'composed reply',
   },
@@ -135,9 +140,7 @@ const makeConversation = (
     recordQuote: jest.fn().mockResolvedValue(undefined),
     getGlobalPaused: jest.fn().mockResolvedValue(false),
     setGlobalPaused: jest.fn().mockResolvedValue(undefined),
-    statusCounts: jest
-      .fn()
-      .mockResolvedValue({ bot: 0, human: 0, paused: 0 }),
+    statusCounts: jest.fn().mockResolvedValue({ bot: 0, human: 0, paused: 0 }),
     ...overrides,
   }) as unknown as ConversationService;
 
@@ -147,9 +150,7 @@ const makeMessageLog = (): MessageLogService =>
     recent: jest.fn().mockResolvedValue([]),
   }) as unknown as MessageLogService;
 
-const makeConfig = (
-  overrides: { owner?: string } = {},
-): ConfigService => {
+const makeConfig = (overrides: { owner?: string } = {}): ConfigService => {
   const owner = 'owner' in overrides ? overrides.owner : OWNER;
   const values: Record<string, string | undefined> = {
     OWNER_PHONE: owner,
@@ -512,7 +513,10 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
     const notifications = makeNotifications();
     const handler = build({ parser, pricing, templates, notifications });
 
-    await handler.handle({ from: CUSTOMER, text: 'is that week free in 2031?' });
+    await handler.handle({
+      from: CUSTOMER,
+      text: 'is that week free in 2031?',
+    });
 
     const calls = templateCalls(templates);
     expect(calls).toContain('availability_pending_pricing');
@@ -568,7 +572,7 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
 });
 
 describe('MessageHandlerService.handle — booking rules', () => {
-  it('renders year_2026_redirect template when booking rules block with that reason', async () => {
+  it('renders year_2026_redirect when the year is blocked AND the week is not free in iCal', async () => {
     const parser = makeParser({
       intent: 'availability_inquiry',
       checkIn: SUN_CHECK_IN,
@@ -578,12 +582,40 @@ describe('MessageHandlerService.handle — booking rules', () => {
       pass: false,
       reason: 'year_2026_redirect',
     });
+    const availability = makeAvailability(false);
+    const templates = makeTemplates();
+    const handler = build({ parser, bookingRules, availability, templates });
+
+    await handler.handle({ from: CUSTOMER, text: 'available in 2026?' });
+
+    expect(templates.render).toHaveBeenCalledWith(
+      'year_2026_redirect',
+      expect.any(Object),
+    );
+  });
+
+  it('quotes the week when the year flag is stale but iCal shows it free', async () => {
+    const parser = makeParser({
+      intent: 'availability_inquiry',
+      checkIn: SUN_CHECK_IN,
+      checkOut: SUN_CHECK_OUT,
+    });
+    const bookingRules = makeBookingRules({
+      pass: false,
+      reason: 'year_2026_redirect',
+    });
+    // Default availability mock: the week IS free — the calendar wins over
+    // the stale flag and the guest gets a real quote, not the redirect.
     const templates = makeTemplates();
     const handler = build({ parser, bookingRules, templates });
 
     await handler.handle({ from: CUSTOMER, text: 'available in 2026?' });
 
     expect(templates.render).toHaveBeenCalledWith(
+      'availability_yes_quote',
+      expect.any(Object),
+    );
+    expect(templates.render).not.toHaveBeenCalledWith(
       'year_2026_redirect',
       expect.any(Object),
     );
@@ -650,7 +682,10 @@ describe('MessageHandlerService.handle — composer-driven intents', () => {
   });
 
   it('general_info with no fragments calls composer with faq_unknown scenario', async () => {
-    const parser = makeParser({ intent: 'general_info', topicKeys: ['unknown'] });
+    const parser = makeParser({
+      intent: 'general_info',
+      topicKeys: ['unknown'],
+    });
     const composer = makeComposer();
     const fragments = makeFragments();
     (fragments.fetchByTopicKeys as jest.Mock).mockResolvedValue([]);
@@ -1074,5 +1109,96 @@ describe('MessageHandlerService.handle — follow-up sequence wiring', () => {
     await handler.handle({ from: CUSTOMER, text: 'hi' });
 
     expect(followUps.cancel).toHaveBeenCalledWith(CUSTOMER);
+  });
+});
+
+describe('MessageHandlerService.handle — partial dates (target date, no full range)', () => {
+  const TARGET_PARSE = {
+    intent: 'availability_inquiry' as const,
+    checkIn: new Date('2027-04-23'), // Friday — guest said "4/5 days over the 23rd"
+    checkOut: null,
+  };
+
+  it('checks the containing + following Sunday weeks against the iCal', async () => {
+    const parser = makeParser(TARGET_PARSE);
+    const availability = makeAvailability(false);
+    const composer = makeComposer();
+    const handler = build({ parser, availability, composer });
+
+    await handler.handle({ from: CUSTOMER, text: '4/5 days over April 23rd?' });
+
+    const calls = (availability.isRangeAvailable as jest.Mock).mock.calls.map(
+      (c: [Date, Date]) => c[0].toISOString().slice(0, 10),
+    );
+    expect(calls).toEqual(['2027-04-18', '2027-04-25']);
+  });
+
+  it('composes partial_dates with RESERVED facts and notifies Jim when both weeks are booked', async () => {
+    const parser = makeParser(TARGET_PARSE);
+    const availability = makeAvailability(false);
+    const composer = makeComposer();
+    const notifications = makeNotifications();
+    const handler = build({ parser, availability, composer, notifications });
+
+    await handler.handle({ from: CUSTOMER, text: '4/5 days over April 23rd?' });
+
+    const pkg = (composer.compose as jest.Mock).mock.calls[0][0];
+    expect(pkg.scenarioHint).toBe('partial_dates');
+    const fact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'requested_week_availability',
+    );
+    expect(fact.text).toContain('18 April 2027');
+    expect(fact.text).toContain('RESERVED');
+    expect(fact.text).not.toContain('AVAILABLE at');
+    expect(notifications.notifyOwnerAboutConversation).toHaveBeenCalledWith(
+      CUSTOMER,
+      'dates_unavailable',
+      expect.objectContaining({
+        extra: expect.objectContaining({ partialDates: true }),
+      }),
+    );
+  });
+
+  it('offers the priced week and parks it for a "yes please" when free', async () => {
+    const parser = makeParser(TARGET_PARSE);
+    const availability = makeAvailability(true);
+    const helpers = makeHelpers();
+    (helpers.getPricingForDateRange as jest.Mock).mockResolvedValue({
+      weeks: 1,
+      nights: 7,
+      weeklyRate: 2400,
+      subtotal: 2400,
+      total: 2400,
+      usedBase: false,
+    });
+    const composer = makeComposer();
+    const conversation = makeConversation();
+    const followUps = makeFollowUps();
+    const handler = build({
+      parser,
+      availability,
+      helpers,
+      composer,
+      conversation,
+      followUps,
+    });
+
+    await handler.handle({ from: CUSTOMER, text: '4/5 days over April 23rd?' });
+
+    const pkg = (composer.compose as jest.Mock).mock.calls[0][0];
+    const fact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'requested_week_availability',
+    );
+    expect(fact.text).toContain('AVAILABLE at £2,400');
+    const parked = (conversation.updateContext as jest.Mock).mock.calls.find(
+      (c: [string, { lastIntent?: string }]) =>
+        c[1].lastIntent === 'awaiting_dates_confirmation',
+    );
+    expect(parked[1].pendingDates).toEqual({
+      checkIn: '2027-04-18',
+      checkOut: '2027-04-25',
+      guests: null,
+    });
+    expect(followUps.schedule).toHaveBeenCalledWith(CUSTOMER);
   });
 });

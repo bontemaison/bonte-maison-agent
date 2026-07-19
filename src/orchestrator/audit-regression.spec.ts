@@ -268,12 +268,17 @@ describe('audit regression — bot conversation problems', () => {
 
   it('Problem 4: correction is NOT misclassified as complaint', async () => {
     const parser = {
-      parse: jest.fn().mockResolvedValue(
-        baseParsed({ intent: 'correction', isCorrection: true }),
-      ),
+      parse: jest
+        .fn()
+        .mockResolvedValue(
+          baseParsed({ intent: 'correction', isCorrection: true }),
+        ),
     } as unknown as ParserService;
     const composer = {
-      compose: jest.fn().mockResolvedValue({ ok: true, text: 'sorry, what would you like to know?' }),
+      compose: jest.fn().mockResolvedValue({
+        ok: true,
+        text: 'sorry, what would you like to know?',
+      }),
     } as unknown as ComposerService;
     const templates = {
       render: jest.fn().mockResolvedValue('rendered'),
@@ -296,10 +301,14 @@ describe('audit regression — bot conversation problems', () => {
 
   it('Problem 5: polite close is NOT routed to unclear_handoff', async () => {
     const parser = {
-      parse: jest.fn().mockResolvedValue(baseParsed({ intent: 'polite_close' })),
+      parse: jest
+        .fn()
+        .mockResolvedValue(baseParsed({ intent: 'polite_close' })),
     } as unknown as ParserService;
     const composer = {
-      compose: jest.fn().mockResolvedValue({ ok: true, text: 'Thanks, no rush.' }),
+      compose: jest
+        .fn()
+        .mockResolvedValue({ ok: true, text: 'Thanks, no rush.' }),
     } as unknown as ComposerService;
     const templates = {
       render: jest.fn().mockResolvedValue('rendered'),
@@ -336,7 +345,11 @@ describe('audit regression — bot conversation problems', () => {
         status: 'bot',
         lifecycleStatus: 'Responded',
         lastIntent: 'availability_inquiry',
-        pendingDates: { checkIn: '2027-09-05', checkOut: '2027-09-12', guests: null },
+        pendingDates: {
+          checkIn: '2027-09-05',
+          checkOut: '2027-09-12',
+          guests: null,
+        },
         customerName: null,
       }),
       updateContext: jest.fn().mockResolvedValue(undefined),
@@ -345,13 +358,20 @@ describe('audit regression — bot conversation problems', () => {
       recordQuote: jest.fn().mockResolvedValue(undefined),
     } as unknown as ConversationService;
     const bookingRules = {
-      validate: jest.fn().mockReturnValue({ pass: false, reason: 'year_2026_redirect' }),
+      validate: jest
+        .fn()
+        .mockReturnValue({ pass: false, reason: 'year_2026_redirect' }),
     } as unknown as BookingRulesService;
     const templates = {
       render: jest.fn().mockResolvedValue('rendered'),
       fetchRaw: jest.fn().mockResolvedValue([]),
     } as unknown as TemplatesService;
-    const handler = buildHandler({ parser, conversation, bookingRules, templates });
+    const handler = buildHandler({
+      parser,
+      conversation,
+      bookingRules,
+      templates,
+    });
 
     await handler.handle({
       from: CUSTOMER,
@@ -370,9 +390,11 @@ describe('audit regression — bot conversation problems', () => {
 
   it('Problem 8: greeting after history present sets needsGreeting=false in composition package', async () => {
     const parser = {
-      parse: jest.fn().mockResolvedValue(
-        baseParsed({ intent: 'greeting', needsGreeting: false }),
-      ),
+      parse: jest
+        .fn()
+        .mockResolvedValue(
+          baseParsed({ intent: 'greeting', needsGreeting: false }),
+        ),
     } as unknown as ParserService;
     const messageLog = {
       log: jest.fn().mockResolvedValue(undefined),
@@ -442,8 +464,72 @@ describe('audit regression — bot conversation problems', () => {
       'year_2026_redirect',
       expect.any(Object),
     );
-    expect(helpers.monthAvailabilitySummary).not.toHaveBeenCalled();
+    // The iCal is consulted first — the redirect only fires because the
+    // summary came back empty (the flag alone is not trusted).
+    expect(helpers.monthAvailabilitySummary).toHaveBeenCalledWith(2026, 9);
     expect(composer.compose).not.toHaveBeenCalled();
+  });
+
+  it('2026 month query lists weeks from iCal even when the year flag is stale', async () => {
+    const parser = {
+      parse: jest.fn().mockResolvedValue(
+        baseParsed({
+          intent: 'availability_inquiry',
+          monthQuery: { year: 2026, month: 9 },
+        }),
+      ),
+    } as unknown as ParserService;
+    const bookingRules = {
+      validate: jest.fn().mockResolvedValue({ pass: true }),
+      isYearFullyBooked: jest
+        .fn()
+        .mockImplementation(async (y: number) => y === 2026),
+      isInstantBookEnabled: jest.fn().mockResolvedValue(false),
+    } as unknown as BookingRulesService;
+    const helpers = {
+      findClosestAvailableWeek: jest.fn().mockResolvedValue(null),
+      monthAvailabilitySummary: jest.fn().mockResolvedValue([
+        {
+          checkIn: new Date('2026-09-20'),
+          checkOut: new Date('2026-09-27'),
+          total: 3495,
+          weeklyRate: 3495,
+          usedBase: false,
+        },
+      ]),
+      multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      getPricingForDateRange: jest.fn().mockResolvedValue(null),
+      checkExistingHold: jest.fn().mockResolvedValue(null),
+    } as unknown as HelpersService;
+    const composer = {
+      compose: jest.fn().mockResolvedValue({ ok: true, text: 'weeks list' }),
+    } as unknown as ComposerService;
+    const templates = {
+      render: jest.fn().mockResolvedValue('rendered'),
+      fetchRaw: jest.fn().mockResolvedValue([]),
+    } as unknown as TemplatesService;
+    const handler = buildHandler({
+      parser,
+      bookingRules,
+      helpers,
+      composer,
+      templates,
+    });
+
+    await handler.handle({
+      from: CUSTOMER,
+      text: 'what weeks are available in september?',
+    });
+
+    expect(templates.render).not.toHaveBeenCalledWith(
+      'year_2026_redirect',
+      expect.any(Object),
+    );
+    const pkg = (composer.compose as jest.Mock).mock.calls[0][0];
+    const weeksFact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'available_weeks',
+    );
+    expect(weeksFact.text).toContain('20 September');
   });
 
   it('Problem 11: month query routes through helpers.monthAvailabilitySummary', async () => {
@@ -470,7 +556,9 @@ describe('audit regression — bot conversation problems', () => {
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;
     const composer = {
-      compose: jest.fn().mockResolvedValue({ ok: true, text: 'available weeks: ...' }),
+      compose: jest
+        .fn()
+        .mockResolvedValue({ ok: true, text: 'available weeks: ...' }),
     } as unknown as ComposerService;
     const handler = buildHandler({ parser, helpers, composer });
 
@@ -511,7 +599,9 @@ describe('audit regression — bot conversation problems', () => {
       (c) => c[0],
     );
     // Quote fires once; harvest note fires once. No composer call (fixed path).
-    expect(renderKeys.filter((k) => k === 'availability_yes_quote').length).toBe(1);
+    expect(
+      renderKeys.filter((k) => k === 'availability_yes_quote').length,
+    ).toBe(1);
     expect(
       renderKeys.filter((k) => k === 'september_wine_harvest_note').length,
     ).toBe(1);
@@ -665,7 +755,12 @@ describe('audit regression — bot conversation problems', () => {
       notifyOwner: jest.fn().mockResolvedValue(undefined),
       notifyOwnerAboutConversation: jest.fn().mockResolvedValue(undefined),
     } as unknown as NotificationsService;
-    const handler = buildHandler({ parser, composer, templates, notifications });
+    const handler = buildHandler({
+      parser,
+      composer,
+      templates,
+      notifications,
+    });
 
     await handler.handle({ from: CUSTOMER, text: 'hello' });
 

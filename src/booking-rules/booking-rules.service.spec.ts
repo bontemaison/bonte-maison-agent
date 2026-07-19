@@ -10,20 +10,25 @@ const makeLogger = (): LoggerService =>
     error: jest.fn(),
   }) as unknown as LoggerService;
 
-const makeAirtable = (
-  flags: Record<string, string> = {},
-): AirtableService => {
+const makeAirtable = (flags: Record<string, string> = {}): AirtableService => {
   return {
-    list: jest.fn().mockImplementation((_table: string, options: { filterByFormula?: string } = {}) => {
-      const match = options.filterByFormula?.match(/^\{key\}='(.+)'$/);
-      const key = match?.[1];
-      if (key && key in flags) {
-        return Promise.resolve([
-          { id: `rec-${key}`, fields: { key, value: flags[key], active: true } },
-        ]);
-      }
-      return Promise.resolve([]);
-    }),
+    list: jest
+      .fn()
+      .mockImplementation(
+        (_table: string, options: { filterByFormula?: string } = {}) => {
+          const match = options.filterByFormula?.match(/^\{key\}='(.+)'$/);
+          const key = match?.[1];
+          if (key && key in flags) {
+            return Promise.resolve([
+              {
+                id: `rec-${key}`,
+                fields: { key, value: flags[key], active: true },
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        },
+      ),
   } as unknown as AirtableService;
 };
 
@@ -103,7 +108,9 @@ describe('BookingRulesService', () => {
 
     it('passes when both are Sundays', async () => {
       const svc = makeService();
-      expect((await svc.validate(SUN_2025_07_06, SUN_2025_07_13)).pass).toBe(true);
+      expect((await svc.validate(SUN_2025_07_06, SUN_2025_07_13)).pass).toBe(
+        true,
+      );
     });
   });
 
@@ -124,7 +131,9 @@ describe('BookingRulesService', () => {
 
     it('passes for a 7-night Sunday stay', async () => {
       const svc = makeService();
-      expect((await svc.validate(SUN_2025_07_06, SUN_2025_07_13)).pass).toBe(true);
+      expect((await svc.validate(SUN_2025_07_06, SUN_2025_07_13)).pass).toBe(
+        true,
+      );
     });
 
     it('passes for a 14-night Sunday stay', async () => {
@@ -135,7 +144,9 @@ describe('BookingRulesService', () => {
 
     it('passes for a 21-night Sunday stay', async () => {
       const svc = makeService();
-      expect((await svc.validate(SUN_2025_07_06, SUN_2025_07_27)).pass).toBe(true);
+      expect((await svc.validate(SUN_2025_07_06, SUN_2025_07_27)).pass).toBe(
+        true,
+      );
     });
   });
 
@@ -179,17 +190,34 @@ describe('BookingRulesService', () => {
   });
 
   describe('validation order', () => {
-    it('checks year_2026 before Sunday validation', async () => {
+    it('checks Sunday validation before year_2026', async () => {
       const svc = makeService({ year_2026_fully_booked: 'true' });
-      // non-Sunday 2026 dates — should get year_2026 not not_sunday
-      const result = await svc.validate(new Date('2026-07-06'), new Date('2026-07-13'));
+      // Non-Sunday 2026 dates — should get not_sunday, not year_2026_redirect.
+      // Date-shape rules run first so a year_2026_redirect always carries
+      // valid Sunday dates the orchestrator can verify against the iCal.
+      const result = await svc.validate(
+        new Date('2026-07-06'),
+        new Date('2026-07-13'),
+      );
+      if (!result.pass) expect(result.reason).toBe('not_sunday');
+    });
+
+    it('returns year_2026_redirect for valid Sunday weeks in 2026', async () => {
+      const svc = makeService({ year_2026_fully_booked: 'true' });
+      const result = await svc.validate(
+        new Date('2026-07-05'),
+        new Date('2026-07-12'),
+      );
       if (!result.pass) expect(result.reason).toBe('year_2026_redirect');
     });
 
     it('checks Sunday before min_stay', async () => {
       const svc = makeService();
       // Monday-to-Tuesday (not Sunday, also < 7 nights) — should get not_sunday
-      const result = await svc.validate(new Date('2025-07-07'), new Date('2025-07-08'));
+      const result = await svc.validate(
+        new Date('2025-07-07'),
+        new Date('2025-07-08'),
+      );
       if (!result.pass) expect(result.reason).toBe('not_sunday');
     });
   });
@@ -299,7 +327,10 @@ describe('BookingRulesService', () => {
 
     it('updates the existing row on recordOwnerEchoSeen when present', async () => {
       const list = jest.fn().mockResolvedValue([
-        { id: 'rec-1', fields: { key: 'last_owner_echo_at', value: 'old', active: true } },
+        {
+          id: 'rec-1',
+          fields: { key: 'last_owner_echo_at', value: 'old', active: true },
+        },
       ]);
       const update = jest.fn().mockResolvedValue({ id: 'rec-1', fields: {} });
       const create = jest.fn();
@@ -309,7 +340,9 @@ describe('BookingRulesService', () => {
       const now = new Date(ISO);
       await svc.recordOwnerEchoSeen(now);
 
-      expect(update).toHaveBeenCalledWith('BookingRules', 'rec-1', { value: ISO });
+      expect(update).toHaveBeenCalledWith('BookingRules', 'rec-1', {
+        value: ISO,
+      });
       expect(create).not.toHaveBeenCalled();
     });
 
@@ -335,8 +368,12 @@ describe('BookingRulesService', () => {
       const airtable = { list } as unknown as AirtableService;
       const svc = new BookingRulesService(airtable, makeLogger());
 
-      await expect(svc.recordOwnerEchoSeen(new Date())).resolves.toBeUndefined();
-      await expect(svc.markHeartbeatWarningSent(new Date())).resolves.toBeUndefined();
+      await expect(
+        svc.recordOwnerEchoSeen(new Date()),
+      ).resolves.toBeUndefined();
+      await expect(
+        svc.markHeartbeatWarningSent(new Date()),
+      ).resolves.toBeUndefined();
     });
 
     it('round-trips markHeartbeatWarningSent / getHeartbeatWarningSentAt', async () => {

@@ -257,8 +257,12 @@ Simple key-value config for rules that change:
 
 Recognised keys:
 - `year_2026_fully_booked` (`"true"` / `"false"`) — when `true`, 2026 dates
-  trigger the redirect template. Read by `BookingRulesService` on every
-  validation.
+  trigger the redirect template — but only when the iCal agrees. Since Jim's
+  2026-07 feedback the calendar wins over a stale flag: if the asked week /
+  month actually shows free weeks in the iCal, the bot lists/quotes them and
+  logs a warning instead of redirecting. Read by `BookingRulesService` on
+  every validation (checked after the date-shape rules, so a redirect result
+  always carries valid Sunday dates).
 - `instant_book_enabled` (`"true"` / `"false"`) — when `true`, booking-
   confirmation replies use the instant-book variant. Read via
   `BookingRulesService.isInstantBookEnabled()`.
@@ -429,6 +433,11 @@ Enforced in `booking-rules/` module before pricing/availability:
 4. **2026 dates → redirect to 2027.** (Use iCal to suggest actual 2027 availability.)
 5. **Oct–May + long stay (>3 weeks or monthly):** flag manual pricing, do not auto-quote.
 6. **Stay spans two pricing bands:** use the band containing the check-in date. ⚠️ *Assumed, needs client confirmation.*
+7. **Partial dates** ("4/5 days over April 23rd, flexible"): the orchestrator
+   resolves the Sunday-to-Sunday week containing the target plus the following
+   week, checks both against holds + iCal, and composes from those pre-checked
+   facts (`partial_dates` scenario). The composer never invents dates; if both
+   weeks are reserved the guest is told so and Jim is notified.
 
 ---
 
