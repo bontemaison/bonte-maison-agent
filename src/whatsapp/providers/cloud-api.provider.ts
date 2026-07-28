@@ -13,6 +13,8 @@ import {
 
 const DEFAULT_GRAPH_VERSION = 'v25.0';
 const RETRY_DELAY_MS = 500;
+const META_API_HOST = 'https://graph.facebook.com';
+const DUALHOOK_API_HOST = 'https://api.dualhook.com';
 
 type CloudApiMessage = {
   from?: string;
@@ -52,13 +54,29 @@ export class CloudApiProvider implements WhatsAppProvider {
     private readonly logger: LoggerService,
   ) {
     const phoneId = config.get<string>('WHATSAPP_PHONE_NUMBER_ID');
-    const token = config.get<string>('WHATSAPP_ACCESS_TOKEN');
+    // Dualhook relays the standard Cloud API payload: same path, same body,
+    // only the hostname and the bearer credential change. Everything below
+    // (webhooks, signatures, echoes) still comes straight from Meta.
+    const isDualhook =
+      (config.get<string>('WHATSAPP_PROVIDER') ?? '').toLowerCase() === 'dualhook';
+    const token = isDualhook
+      ? config.get<string>('DUALHOOK_LIVE_KEY')
+      : config.get<string>('WHATSAPP_ACCESS_TOKEN');
     if (!phoneId || !token) {
-      throw new Error('WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN must be set');
+      throw new Error(
+        isDualhook
+          ? 'WHATSAPP_PHONE_NUMBER_ID and DUALHOOK_LIVE_KEY must be set'
+          : 'WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN must be set',
+      );
     }
     const version = config.get<string>('WHATSAPP_GRAPH_VERSION') ?? DEFAULT_GRAPH_VERSION;
-    this.url = `https://graph.facebook.com/${version}/${phoneId}/messages`;
+    const host = isDualhook ? DUALHOOK_API_HOST : META_API_HOST;
+    this.url = `${host}/${version}/${phoneId}/messages`;
     this.accessToken = token;
+    this.logger.info('whatsapp', 'outbound endpoint configured', {
+      url: this.url,
+      credential: isDualhook ? 'DUALHOOK_LIVE_KEY' : 'WHATSAPP_ACCESS_TOKEN',
+    });
     this.appSecret = config.get<string>('WHATSAPP_APP_SECRET') ?? '';
     this.verifyToken = config.get<string>('WHATSAPP_VERIFY_TOKEN') ?? '';
     // Escape hatch for Dualhook-style Webhook Override setups where Meta

@@ -15,9 +15,9 @@ import { WHATSAPP_PROVIDER, WhatsappService } from './whatsapp.service';
       useFactory: (config: ConfigService, logger: LoggerService) => {
         const providerName = config.get<string>('WHATSAPP_PROVIDER') ?? 'cloud_api';
         logger.info('whatsapp', `using provider: ${providerName}`, {});
-        // `dualhook` is a deployment configuration on top of Meta Cloud API
-        // (webhook override + embedded signup). At the wire level it's
-        // identical to cloud_api, so we accept it as an alias here.
+        // `dualhook` uses the same Cloud API wire format, so it shares
+        // CloudApiProvider — the provider itself swaps the outbound host to
+        // api.dualhook.com and the bearer to DUALHOOK_LIVE_KEY.
         if (providerName === 'wati') return new WatiProvider(config, logger);
         return new CloudApiProvider(config, logger);
       },

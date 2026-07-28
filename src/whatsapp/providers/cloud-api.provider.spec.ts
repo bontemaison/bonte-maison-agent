@@ -46,6 +46,111 @@ describe('CloudApiProvider', () => {
         () => new CloudApiProvider(makeConfig({ WHATSAPP_ACCESS_TOKEN: undefined }), makeLogger()),
       ).toThrow();
     });
+
+    it('throws when WHATSAPP_PROVIDER=dualhook but DUALHOOK_LIVE_KEY is missing', () => {
+      expect(
+        () =>
+          new CloudApiProvider(
+            makeConfig({ WHATSAPP_PROVIDER: 'dualhook', DUALHOOK_LIVE_KEY: undefined }),
+            makeLogger(),
+          ),
+      ).toThrow(/DUALHOOK_LIVE_KEY/);
+    });
+  });
+
+  describe('Dualhook relay', () => {
+    const dualhookConfig = () =>
+      makeConfig({ WHATSAPP_PROVIDER: 'dualhook', DUALHOOK_LIVE_KEY: 'dh_live_abc' });
+
+    it('POSTs to api.dualhook.com with the dh_live_ key as bearer', async () => {
+      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.dh' }] } });
+      const provider = new CloudApiProvider(dualhookConfig(), makeLogger());
+
+      await provider.sendMessage('628123456789', 'hello');
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        'https://api.dualhook.com/v25.0/phone-id-123/messages',
+        expect.objectContaining({
+          messaging_product: 'whatsapp',
+          to: '628123456789',
+          type: 'text',
+          text: { body: 'hello' },
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer dh_live_abc',
+            'Content-Type': 'application/json',
+          }),
+        }),
+      );
+    });
+
+    it('routes templates through Dualhook too', async () => {
+      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.dht' }] } });
+      const provider = new CloudApiProvider(dualhookConfig(), makeLogger());
+
+      await provider.sendTemplate('628', 'owner_notification', { body: 'alert' });
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.stringContaining('api.dualhook.com'),
+        expect.objectContaining({ type: 'template' }),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer dh_live_abc' }),
+        }),
+      );
+    });
+
+    it('never sends the Meta access token to Dualhook', async () => {
+      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.dh' }] } });
+      const provider = new CloudApiProvider(dualhookConfig(), makeLogger());
+
+      await provider.sendMessage('628', 'hi');
+
+      const [, , cfg] = mockedAxios.post.mock.calls[0] as [
+        string,
+        unknown,
+        { headers: Record<string, string> },
+      ];
+      expect(cfg.headers.Authorization).not.toContain('access-token');
+    });
+
+    it('still posts to graph.facebook.com when provider is cloud_api', async () => {
+      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.m' }] } });
+      const provider = new CloudApiProvider(
+        makeConfig({ WHATSAPP_PROVIDER: 'cloud_api', DUALHOOK_LIVE_KEY: 'dh_live_abc' }),
+        makeLogger(),
+      );
+
+      await provider.sendMessage('628', 'hi');
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.stringContaining('graph.facebook.com'),
+        expect.any(Object),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+        }),
+      );
+    });
+
+    it('honours WHATSAPP_GRAPH_VERSION on the Dualhook host', async () => {
+      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.dh' }] } });
+      const provider = new CloudApiProvider(
+        makeConfig({
+          WHATSAPP_PROVIDER: 'dualhook',
+          DUALHOOK_LIVE_KEY: 'dh_live_abc',
+          WHATSAPP_GRAPH_VERSION: 'v23.0',
+        }),
+        makeLogger(),
+      );
+
+      await provider.sendMessage('628', 'hi');
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        'https://api.dualhook.com/v23.0/phone-id-123/messages',
+        expect.any(Object),
+        expect.any(Object),
+      );
+    });
   });
 
   describe('sendMessage', () => {

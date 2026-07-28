@@ -78,6 +78,21 @@ All outbound messages through `WhatsappService.sendMessage()`. Logs every send, 
 
 Session sends wait a human-like typing delay scaled by reply length (50ms/char, clamped 2–10s — constants in `whatsapp.service.ts`) so replies don't feel instant/robotic. `sendTemplate` (HSM, owner notifications) sends immediately.
 
+### Dualhook (outbound relay)
+Production runs `WHATSAPP_PROVIDER=dualhook`. Dualhook relays outbound Cloud API
+requests — the payload, path and API version are unchanged; only the host and
+the bearer differ. `CloudApiProvider` resolves both at construction:
+
+| provider | host | bearer |
+|---|---|---|
+| `cloud_api` | `graph.facebook.com` | `WHATSAPP_ACCESS_TOKEN` |
+| `dualhook` | `api.dualhook.com` | `DUALHOOK_LIVE_KEY` (`dh_live_...`) |
+
+The `dh_live_` key is server-side only — never sent to Meta, never in client
+code. Inbound webhooks are **not** relayed: they still arrive directly from
+Meta, so signature handling (`WHATSAPP_SKIP_SIGNATURE_CHECK`,
+`WHATSAPP_APP_SECRET`) is unaffected by this setting.
+
 ### Logging
 Use `LoggerService`, not `console.log`. Every log specifies module tag + level:
 
@@ -345,9 +360,11 @@ so it never auto-resumes — that handover stays with Jim until he `/resume`s.
 ```
 # WhatsApp Business API
 WHATSAPP_PHONE_NUMBER_ID=
-WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_ACCESS_TOKEN=      # unused when WHATSAPP_PROVIDER=dualhook
 WHATSAPP_VERIFY_TOKEN=
 WHATSAPP_APP_SECRET=
+WHATSAPP_PROVIDER=          # cloud_api | dualhook | wati
+DUALHOOK_LIVE_KEY=          # dh_live_... — required when provider is dualhook
 
 # Airtable
 AIRTABLE_API_KEY=
