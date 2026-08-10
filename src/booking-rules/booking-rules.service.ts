@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { AirtableService } from '../airtable/airtable.service';
 import { LoggerService } from '../logger/logger.service';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+import {
+  DAY_MS,
+  formatIsoDate as isoDate,
+  nextSunday,
+} from '../common/dates';
 const MIN_NIGHTS = 7;
 const MAX_STANDARD_NIGHTS = 21;
 // Months that trigger manual pricing for long stays: Oct(9) through May(4)
@@ -47,15 +50,15 @@ export class BookingRulesService {
 
   async validate(checkIn: Date, checkOut: Date): Promise<RulesValidation> {
     if (checkIn.getUTCDay() !== 0 || checkOut.getUTCDay() !== 0) {
-      const suggestedCheckIn = this.nextSunday(checkIn);
+      const suggestedCheckIn = nextSunday(checkIn);
       const suggestedCheckOut = new Date(
         suggestedCheckIn.getTime() + MIN_NIGHTS * DAY_MS,
       );
       return {
         pass: false,
         reason: 'not_sunday',
-        suggestedCheckIn: this.isoDate(suggestedCheckIn),
-        suggestedCheckOut: this.isoDate(suggestedCheckOut),
+        suggestedCheckIn: isoDate(suggestedCheckIn),
+        suggestedCheckOut: isoDate(suggestedCheckOut),
       };
     }
 
@@ -70,8 +73,8 @@ export class BookingRulesService {
       return {
         pass: false,
         reason: 'min_stay',
-        suggestedCheckIn: this.isoDate(checkIn),
-        suggestedCheckOut: this.isoDate(suggestedCheckOut),
+        suggestedCheckIn: isoDate(checkIn),
+        suggestedCheckOut: isoDate(suggestedCheckOut),
       };
     }
 
@@ -243,12 +246,4 @@ export class BookingRulesService {
     return false;
   }
 
-  private nextSunday(date: Date): Date {
-    const daysUntilSunday = (7 - date.getUTCDay()) % 7;
-    return new Date(date.getTime() + daysUntilSunday * DAY_MS);
-  }
-
-  private isoDate(d: Date): string {
-    return d.toISOString().slice(0, 10);
-  }
 }

@@ -93,6 +93,43 @@ code. Inbound webhooks are **not** relayed: they still arrive directly from
 Meta, so signature handling (`WHATSAPP_SKIP_SIGNATURE_CHECK`,
 `WHATSAPP_APP_SECRET`) is unaffected by this setting.
 
+### Dates & timezones
+Booking dates are **calendar dates, not instants** — "2 May 2027" is a day.
+Every one is anchored at UTC midnight. All helpers live in `src/common/dates.ts`
+(`parseIsoDate`, `formatIsoDate`, `nextSunday`, `startOfUtcDay`, `addDays`,
+`DAY_MS`) — never build a booking date with a bare `new Date(...)` elsewhere.
+
+The SuperControl iCal feed emits **floating** datetimes (`DTSTART:20270509T000000`
+— no `Z`, no `TZID`), which node-ical resolves in the *server's* local zone. On
+UTC+7 that read 9 May as `2027-05-08T17:00Z`, so every booking bled into the
+preceding week and free weeks reported as unavailable. `AvailabilityService`
+re-anchors each event via `floatingDateToUtc` on ingest, which is correct on any
+server timezone. If the feed ever starts sending zoned values, the event is left
+as parsed and a warning is logged.
+
+`TZ=UTC` is set in env and `cron.schedule` is pinned to UTC as belt-and-braces,
+but the code must not *depend* on either. Guard with `npm run test:tz`, which
+runs the suite under Asia/Jakarta, America/Los_Angeles and UTC. Test fixtures for
+iCal events must model node-ical's output — **local** midnight, not UTC midnight
+(see `floatingLocalMidnight` in `availability.service.spec.ts`).
+
+Airtable: `check_in`/`check_out` are date-only strings — keep "include time" off.
+`hold_expires_at`/`hold_created_at` are true instants, written via `toISOString()`.
+
+### Holds: expiry is derived, never read from `status`
+A hold is expired the instant `hold_expires_at` passes. The `status` column is a
+**cache for Jim's CRM view**, reconciled afterwards by the cron — it is never the
+source of truth. Read paths (`hasOverlap`, `getActiveHoldForPhone`) call
+`isLapsed()`; checking `status` alone let a lapsed hold block bookings until the
+next cron tick.
+
+`HoldsCronService` runs every 15 minutes (holds expire at `created + 5 days`, i.e.
+at whatever minute the guest asked — a daily tick missed its own window by up to
+24h). Both notify branches **claim before sending** — write `status`/
+`reminder_sent` first, then send. At this cadence, notifying first would re-send
+to the guest 96×/day if a status write failed. Losing one message to a failed
+send is the accepted trade; the error is logged.
+
 ### Logging
 Use `LoggerService`, not `console.log`. Every log specifies module tag + level:
 
@@ -411,6 +448,7 @@ CLAUDE_RESPONSE_MODEL=claude-sonnet-4-6
 PORT=3000
 NODE_ENV=development
 LOG_LEVEL=debug
+TZ=UTC              # pin the process timezone — see "Dates & timezones"
 ```
 
 ---

@@ -118,6 +118,46 @@ describe('HoldsService', () => {
 
       expect(result).toBe(false);
     });
+
+    // Regression: a hold whose expiry has passed but whose status column the
+    // cron has not yet reconciled must not block a booking. This blocked
+    // 2027-05-02 for ~24h because status was the only thing checked.
+    it('ignores a lapsed hold still marked active', async () => {
+      const airtable = makeAirtable([
+        activeHoldRow({
+          status: 'active',
+          hold_expires_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        }),
+      ]);
+      const svc = new HoldsService(airtable, makeLogger());
+
+      const result = await svc.hasOverlap(
+        new Date('2026-07-06'),
+        new Date('2026-07-13'),
+      );
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('getActiveHoldForPhone', () => {
+    it('returns the hold while it is still live', async () => {
+      const airtable = makeAirtable([activeHoldRow()]);
+      const svc = new HoldsService(airtable, makeLogger());
+
+      expect(await svc.getActiveHoldForPhone('+441234567890')).not.toBeNull();
+    });
+
+    it('returns null for a lapsed hold still marked active', async () => {
+      const airtable = makeAirtable([
+        activeHoldRow({
+          hold_expires_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        }),
+      ]);
+      const svc = new HoldsService(airtable, makeLogger());
+
+      expect(await svc.getActiveHoldForPhone('+441234567890')).toBeNull();
+    });
   });
 
   describe('getActiveHoldForPhone', () => {

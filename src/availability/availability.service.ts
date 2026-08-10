@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as ical from 'node-ical';
 import { LoggerService } from '../logger/logger.service';
+import { DAY_MS, floatingDateToUtc, nextSunday } from '../common/dates';
 
 type VEvent = { type: 'VEVENT'; start: Date; end: Date; summary?: string };
 
@@ -41,10 +42,10 @@ export class AvailabilityService {
     }
     const events = await this.fetchEvents();
     const out: Array<{ checkIn: Date; checkOut: Date }> = [];
-    const cursor = this.firstSundayOnOrAfter(rangeStart);
+    const cursor = nextSunday(rangeStart);
     while (cursor.getTime() < rangeEnd.getTime()) {
       const checkIn = new Date(cursor.getTime());
-      const checkOut = new Date(cursor.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const checkOut = new Date(cursor.getTime() + 7 * DAY_MS);
       if (!this.eventsOverlapRange(events, checkIn, checkOut)) {
         out.push({ checkIn, checkOut });
       }
@@ -53,21 +54,27 @@ export class AvailabilityService {
     return out;
   }
 
-  private firstSundayOnOrAfter(d: Date): Date {
-    const result = new Date(
-      Date.UTC(
-        d.getUTCFullYear(),
-        d.getUTCMonth(),
-        d.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    );
-    const dow = result.getUTCDay();
-    if (dow !== 0) result.setUTCDate(result.getUTCDate() + (7 - dow));
-    return result;
+  /**
+   * The SuperControl feed emits floating datetimes (`20270509T000000` — no `Z`,
+   * no `TZID`), which node-ical resolves in the server's local zone. Left alone,
+   * a UTC+7 server reads 9 May as 2027-05-08T17:00Z and the preceding week looks
+   * booked. Re-anchor to UTC midnight so range checks are timezone-independent.
+   */
+  private normaliseEvent(e: VEvent): VEvent {
+    const tz = (e.start as unknown as { tz?: string }).tz;
+    if (tz) {
+      this.logger.warn(
+        'availability',
+        'iCal event carries a timezone; left as parsed',
+        { summary: e.summary, tz },
+      );
+      return e;
+    }
+    return {
+      ...e,
+      start: floatingDateToUtc(e.start),
+      end: floatingDateToUtc(e.end),
+    };
   }
 
   private eventsOverlapRange(
@@ -85,9 +92,10 @@ export class AvailabilityService {
   private async fetchEvents(): Promise<VEvent[]> {
     try {
       const parsed = await ical.async.fromURL(this.icalUrl);
-      return Object.values(parsed).filter(
+      const events = Object.values(parsed).filter(
         (entry) => (entry as { type?: string }).type === 'VEVENT',
       ) as unknown as VEvent[];
+      return events.map((e) => this.normaliseEvent(e));
     } catch (err) {
       const message = (err as Error).message;
       this.logger.error('availability', 'iCal fetch failed', {

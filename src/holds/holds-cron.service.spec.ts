@@ -67,6 +67,67 @@ describe('HoldsCronService', () => {
       expect(holds.setStatus).not.toHaveBeenCalled();
     });
 
+    // Regression: at a 15-minute cadence, notifying before claiming would
+    // re-send to the guest on every tick if the status write ever failed.
+    it('claims the status before notifying an expired hold', async () => {
+      const hold = holdFixture({
+        hold_expires_at: new Date(Date.now() - 60 * 1000).toISOString(),
+      });
+      const holds = makeHolds([hold]);
+      const whatsapp = makeWhatsapp();
+      const order: string[] = [];
+      (holds.setStatus as jest.Mock).mockImplementation(() => {
+        order.push('setStatus');
+        return Promise.resolve();
+      });
+      (whatsapp.sendMessage as jest.Mock).mockImplementation(() => {
+        order.push('sendMessage');
+        return Promise.resolve();
+      });
+      const svc = new HoldsCronService(
+        holds,
+        whatsapp,
+        makeMessageLog(),
+        makeResponse('expired text'),
+        makeLogger(),
+      );
+
+      await svc.runDailyCheck();
+
+      expect(order).toEqual(['setStatus', 'sendMessage']);
+      expect(holds.setStatus).toHaveBeenCalledWith('rec1', 'expired');
+    });
+
+    it('claims reminder_sent before notifying', async () => {
+      const soon = new Date(Date.now() + 60 * 60 * 1000);
+      const hold = holdFixture({
+        hold_expires_at: soon.toISOString(),
+        reminder_sent: false,
+      });
+      const holds = makeHolds([hold]);
+      const whatsapp = makeWhatsapp();
+      const order: string[] = [];
+      (holds.setReminderSent as jest.Mock).mockImplementation(() => {
+        order.push('setReminderSent');
+        return Promise.resolve();
+      });
+      (whatsapp.sendMessage as jest.Mock).mockImplementation(() => {
+        order.push('sendMessage');
+        return Promise.resolve();
+      });
+      const svc = new HoldsCronService(
+        holds,
+        whatsapp,
+        makeMessageLog(),
+        makeResponse('reminder text'),
+        makeLogger(),
+      );
+
+      await svc.runDailyCheck();
+
+      expect(order).toEqual(['setReminderSent', 'sendMessage']);
+    });
+
     it('does not send reminder if already sent', async () => {
       const tomorrow = new Date();
       tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);

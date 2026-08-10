@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AirtableRecord, AirtableService } from '../airtable/airtable.service';
 import { LoggerService } from '../logger/logger.service';
+import { DAY_MS, formatIsoDate, parseIsoDate } from '../common/dates';
 
 export type HoldStatus = 'active' | 'expired' | 'converted' | 'cancelled';
 
@@ -18,6 +19,15 @@ export type Hold = AirtableRecord<HoldFields>;
 
 const HOLD_DAYS = 5;
 
+/**
+ * A hold is expired the instant `hold_expires_at` passes. The `status` column is
+ * a cache for Jim's CRM view that the cron reconciles afterwards — never the
+ * source of truth, or a hold blocks bookings until the next cron tick.
+ */
+export function isLapsed(hold: Hold, now: Date = new Date()): boolean {
+  return new Date(hold.fields.hold_expires_at).getTime() <= now.getTime();
+}
+
 @Injectable()
 export class HoldsService {
   constructor(
@@ -27,12 +37,12 @@ export class HoldsService {
 
   async createHold(phone: string, checkIn: Date, checkOut: Date): Promise<Hold> {
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + HOLD_DAYS * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(now.getTime() + HOLD_DAYS * DAY_MS);
 
     const fields: HoldFields = {
       phone,
-      check_in: this.toIsoDate(checkIn),
-      check_out: this.toIsoDate(checkOut),
+      check_in: formatIsoDate(checkIn),
+      check_out: formatIsoDate(checkOut),
       hold_created_at: now.toISOString(),
       hold_expires_at: expiresAt.toISOString(),
       reminder_sent: false,
@@ -50,11 +60,14 @@ export class HoldsService {
   }
 
   async hasOverlap(checkIn: Date, checkOut: Date): Promise<boolean> {
+    const now = new Date();
     const active = await this.listActive();
     return active.some((h) => {
-      if (h.fields.status !== 'active') return false;
-      const hIn = new Date(h.fields.check_in);
-      const hOut = new Date(h.fields.check_out);
+      // Both guards: `listActive` filters on status server-side, but a hold is
+      // only really live if its expiry is also still ahead of us.
+      if (h.fields.status !== 'active' || isLapsed(h, now)) return false;
+      const hIn = parseIsoDate(h.fields.check_in);
+      const hOut = parseIsoDate(h.fields.check_out);
       return hIn < checkOut && hOut > checkIn;
     });
   }
@@ -62,9 +75,11 @@ export class HoldsService {
   async getActiveHoldForPhone(phone: string): Promise<Hold | null> {
     const rows = await this.airtable.list<HoldFields>('Holds', {
       filterByFormula: `AND({phone}='${phone}', {status}='active')`,
-      maxRecords: 1,
     });
-    return rows[0] ?? null;
+    const now = new Date();
+    return (
+      rows.find((h) => h.fields.status === 'active' && !isLapsed(h, now)) ?? null
+    );
   }
 
   async listActive(): Promise<Hold[]> {
@@ -79,9 +94,5 @@ export class HoldsService {
 
   async setReminderSent(id: string): Promise<void> {
     await this.airtable.update<HoldFields>('Holds', id, { reminder_sent: true });
-  }
-
-  private toIsoDate(d: Date): string {
-    return d.toISOString().slice(0, 10);
   }
 }

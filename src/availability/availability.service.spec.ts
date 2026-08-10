@@ -20,10 +20,21 @@ const makeLogger = (): LoggerService =>
     error: jest.fn(),
   }) as unknown as LoggerService;
 
+/**
+ * Models how node-ical resolves a floating iCal datetime (`20260605T000000` —
+ * no `Z`, no `TZID`): local midnight, not UTC midnight. Building these with
+ * `new Date('2026-06-05')` would give UTC midnight and quietly hide the
+ * timezone handling this suite exists to check.
+ */
+const floatingLocalMidnight = (iso: string): Date => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
 const event = (start: string, end: string) => ({
   type: 'VEVENT',
-  start: new Date(start),
-  end: new Date(end),
+  start: floatingLocalMidnight(start),
+  end: floatingLocalMidnight(end),
   summary: 'Booked',
 });
 
@@ -74,6 +85,23 @@ describe('AvailabilityService', () => {
     const ok = await service.isRangeAvailable(
       new Date('2026-06-01'),
       new Date('2026-06-05'),
+    );
+
+    expect(ok).toBe(true);
+  });
+
+  // Regression: Jim's 2 May 2027 report. Booking ref 28 runs 9-16 May, so the
+  // 2-9 May week is free — but on a UTC+7 server node-ical read the floating
+  // DTSTART as 2027-05-08T17:00Z and the week before looked booked.
+  it('reports the week before a booking as available on any server timezone', async () => {
+    mockFromURL.mockResolvedValue({
+      a: event('2027-05-09', '2027-05-16'),
+    });
+    const service = new AvailabilityService(makeConfig(ICAL_URL), makeLogger());
+
+    const ok = await service.isRangeAvailable(
+      new Date('2027-05-02'),
+      new Date('2027-05-09'),
     );
 
     expect(ok).toBe(true);

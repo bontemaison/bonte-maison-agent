@@ -1,10 +1,11 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import * as cron from 'node-cron';
-import { HoldsService, Hold } from './holds.service';
+import { HoldsService, Hold, isLapsed } from './holds.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { MessageLogService } from '../messagelog/messagelog.service';
 import { TemplatesService } from '../templates/templates.service';
 import { LoggerService } from '../logger/logger.service';
+import { DAY_MS } from '../common/dates';
 
 @Injectable()
 export class HoldsCronService implements OnModuleInit, OnModuleDestroy {
@@ -19,12 +20,19 @@ export class HoldsCronService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    // daily at 08:00 UTC
-    this.task = cron.schedule('0 8 * * *', () => {
-      this.runDailyCheck().catch((err: Error) => {
-        this.logger.error('holds', 'cron runDailyCheck failed', { error: err.message });
-      });
-    });
+    // Every 15 minutes. A hold expires at `created + 5 days` — i.e. at whatever
+    // minute the guest asked for it — so a daily tick missed its own expiry
+    // window by up to 24h. Timezone is pinned so the schedule can't drift with
+    // the server's TZ.
+    this.task = cron.schedule(
+      '*/15 * * * *',
+      () => {
+        this.runDailyCheck().catch((err: Error) => {
+          this.logger.error('holds', 'cron runDailyCheck failed', { error: err.message });
+        });
+      },
+      { timezone: 'UTC' },
+    );
   }
 
   onModuleDestroy(): void {
@@ -33,7 +41,7 @@ export class HoldsCronService implements OnModuleInit, OnModuleDestroy {
 
   async runDailyCheck(): Promise<void> {
     const active = await this.holds.listActive();
-    this.logger.info('holds', 'daily check', { count: active.length });
+    this.logger.info('holds', 'holds check', { count: active.length });
 
     for (const hold of active) {
       try {
@@ -53,7 +61,13 @@ export class HoldsCronService implements OnModuleInit, OnModuleDestroy {
     const expiresAt = new Date(hold.fields.hold_expires_at);
     const { phone, check_in, check_out } = hold.fields;
 
-    if (expiresAt <= now) {
+    // Claim before sending, in both branches. At a 15-minute cadence a send that
+    // throws after delivery would otherwise re-notify the guest 96 times a day.
+    // Losing one message to a failed send is the better trade — the error is
+    // logged by the caller either way.
+    if (isLapsed(hold, now)) {
+      await this.holds.setStatus(hold.id, 'expired');
+      this.logger.info('holds', 'hold expired', { id: hold.id, phone });
       const text = await this.templates.render('hold_expired', {
         phone,
         check_in,
@@ -61,15 +75,14 @@ export class HoldsCronService implements OnModuleInit, OnModuleDestroy {
       });
       await this.whatsapp.sendMessage(phone, text);
       await this.messageLog.log(phone, 'out', text);
-      await this.holds.setStatus(hold.id, 'expired');
-      this.logger.info('holds', 'hold expired', { id: hold.id, phone });
       return;
     }
 
-    const msUntilExpiry = expiresAt.getTime() - now.getTime();
-    const daysUntilExpiry = msUntilExpiry / (24 * 60 * 60 * 1000);
+    const daysUntilExpiry = (expiresAt.getTime() - now.getTime()) / DAY_MS;
 
     if (daysUntilExpiry <= 1 && !hold.fields.reminder_sent) {
+      await this.holds.setReminderSent(hold.id);
+      this.logger.info('holds', 'hold reminder sent', { id: hold.id, phone });
       const text = await this.templates.render('hold_reminder', {
         phone,
         check_in,
@@ -77,8 +90,6 @@ export class HoldsCronService implements OnModuleInit, OnModuleDestroy {
       });
       await this.whatsapp.sendMessage(phone, text);
       await this.messageLog.log(phone, 'out', text);
-      await this.holds.setReminderSent(hold.id);
-      this.logger.info('holds', 'hold reminder sent', { id: hold.id, phone });
     }
   }
 }
