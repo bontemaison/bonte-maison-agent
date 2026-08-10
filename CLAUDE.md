@@ -57,6 +57,7 @@ src/
 ├── knowledge-base/    # Property-fact FAQs (pool, sleeps, location, etc.) — answered by bot, not handed off
 ├── conversation/      # Conversation state, handoff logic, command parsing
 ├── holds/             # 🔴 5-day hold system + expiry scheduler
+├── guests/            # Guest recognition — Guests table + journey mode resolution
 ├── follow-ups/        # 🔴 24h + 7d follow-up sequences
 ├── email-integration/ # 🔴 SuperControl email ingestion + nudge triggering
 ├── notifications/     # 🔴 Jim escalation channel (WhatsApp to Jim's number)
@@ -116,6 +117,54 @@ iCal events must model node-ical's output — **local** midnight, not UTC midnig
 Airtable: `check_in`/`check_out` are date-only strings — keep "include time" off.
 `hold_expires_at`/`hold_created_at` are true instants, written via `toISOString()`.
 
+### Phone numbers
+The canonical form is **digits only, no leading `+`** (`447901857452`) — exactly
+what Meta puts in `wa_id`, and what every `phone` column already holds
+(`Conversations`, `Holds`, `MessageLog`, `Guests`, `OWNER_PHONE`). Helpers live
+in `src/common/phone.ts`:
+
+- `normalizePhone(raw, defaultCc = DEFAULT_COUNTRY_CODE)` — handles `07…`,
+  `+44…`, `0044…`, punctuation, and the `+44 (0)7435…` trunk-prefix form.
+  Returns `null` for anything unusable; callers log and skip rather than
+  writing a number that can never match.
+- `formatE164(phone)` — display only, for owner notifications. **Nothing writes
+  a `+` to Airtable.**
+
+Numbers from SuperControl emails and numbers from the webhook both go through
+`normalizePhone` before they are compared, so format differences can never cause
+a missed recognition.
+
+### Guest recognition & journey modes
+`GuestsService.resolveContext(phone)` runs on every inbound message and returns
+one of five modes. **Stay status is derived at lookup** against today's date, so
+a guest moves future → current → past with no edit in Airtable.
+
+Resolution order — a paid booking outranks a speculative hold:
+
+1. booking with `check_in <= today <= check_out` → `current_guest`
+   (arrival *and* departure day both count as in-stay)
+2. soonest booking with `check_in > today` → `future_guest`
+3. `HoldsService.getActiveHoldForPhone` → `hold`
+4. any booking with `check_out < today` → `past_guest`
+5. otherwise → `prospect`
+
+`resolveContext` **never throws** — an Airtable failure logs and returns
+`prospect`, which is the pre-recognition behaviour. A message is never dropped
+because recognition was unavailable.
+
+The orchestrator changes by **context injection, not routing**: the prospect
+funnel is untouched. For any mode other than `prospect`, `buildCompositionPackage`
+adds two facts — `guest_context` (the structured record) and
+`guest_mode_guidance` (tone rules for that stage). For `future_guest` and
+`current_guest` only (`CONFIRMED_GUEST_MODES` in `message-handler.service.ts`)
+three guardrails also apply: `needsNudgeToBook` is forced false, the
+`www.bontemaison.com` link is not appended, and `followUps.schedule` is skipped.
+A guest on a hold, or a past guest asking about a return visit, is still being
+sold to and keeps all three.
+
+Nothing financial ever reaches the composer — `ParsedBooking` has no field for
+it (see below).
+
 ### Holds: expiry is derived, never read from `status`
 A hold is expired the instant `hold_expires_at` passes. The `status` column is a
 **cache for Jim's CRM view**, reconciled afterwards by the cron — it is never the
@@ -147,6 +196,7 @@ Colors:
 - `templates` → green
 - `conversation` → white
 - `holds` → bright yellow
+- `guests` → bright white
 - `follow-ups` → bright blue
 - `email-integration` → bright magenta
 - `notifications` → bright green
@@ -218,6 +268,47 @@ Write failing test → minimal code → refactor → move on.
 28. Every handler updates CRM fields
 29. Status transitions: New → Responded → Follow-up → Booked / Lost
 
+#### SuperControl email — what actually arrives
+SuperControl does **not** send from `bookings@bontemaison.com`. It relays through
+Mandrill, which rewrites the envelope sender:
+
+```
+From:     "Bonte holiday home in France"
+          <bookings=bontemaison.com@secure-booking-email.net>
+Reply-To: bookings@bontemaison.com
+```
+
+Only the `Reply-To` carries the friendly address, so both forms are allowlisted
+in `SUPERCONTROL_CONFIG.senderEmails`. `SUPERCONTROL_EXTRA_SENDERS` still adds
+more at runtime. A real example lives at `resources/booking-confirmed.eml`.
+
+There are **nine** email types, not eight. Eight nudge subjects map to a
+`NudgeKey` and fire a WhatsApp template. The ninth —
+`BOOKING_RECORD_SUBJECT` (`"Deposit paid for your holiday at Bonte"`) — is the
+one that carries the guest's phone number. It writes a `Guests` row and sends
+**nothing**; it never reaches the nudge dispatcher. Note it is distinct from
+`nudge_booking_confirmation` ("Your Stay at Bonté is Confirmed"), which
+SuperControl sends later once the balance is paid.
+
+`booking-email.parser.ts` parses the decoded `text/plain` part (HTML as
+fallback). The raw MIME part is quoted-printable and breaks words across lines,
+so it **must** go through `simpleParser` before any regex touches it. Three
+traps, all covered by the spec:
+
+- Jim signs every email with `+44 (0)7435 301 371`, so the phone regex is
+  anchored on `Tel:` — an unanchored search stores the owner's number.
+- `Booking date:` sits directly above `Arrival date:` with the identical date
+  shape, so the date anchors are label-bound.
+- `Guests:` straddles a line break (`Adults: 4\nChildren: 2 Infants: 2`).
+
+**`ParsedBooking` has no field for money.** The property total, deposit,
+balance, masked card PAN and payment link all collapse into the same paragraph
+as the arrival/departure rows, so nothing financial is captured and none of it
+can reach Airtable or the composer.
+
+A booking with no phone number is still written (Jim adds the number by hand)
+and Jim is notified — dropping the record would lose the whole booking.
+
 #### 🔴 Phase 5 — SuperControl email integration
 30. Email ingestion method (IMAP monitoring OR webhook — TBD ⚠️)
 31. Email parser (identify type: booking confirmation / arrival / pre-arrival / mid-stay / thank you / review)
@@ -286,12 +377,49 @@ Write failing test → minimal code → refactor → move on.
 - `reminder_sent` (checkbox)
 - `status` (enum: `active | expired | converted | cancelled`)
 
+### `Guests`
+**One record per booking** — repeat guests get multiple rows, and that *is* the
+stay history (no separate preference store). Written by the booking-email parser
+and by `npm run backfill:guests`; upserted on `booking_ref` so replays are safe.
+- `booking_ref` (string, primary — the upsert key)
+- `phone` (string, normalised, no `+` — the lookup index)
+- `phone_raw` (string — as it appeared in the email, for debugging a bad parse)
+- `guest_name`, `email` (string)
+- `check_in`, `check_out` (date — **date-only**, "include time" off)
+- `adults`, `children`, `infants` (number)
+- `property` (string), `source` (`supercontrol_email | backfill | manual`)
+- `created_at` (datetime — true instant)
+
+Jim's columns, **never written by the parser** so a re-parse can't wipe them:
+- `dogs` (number — not in the booking email, entered by hand)
+- `cot_or_highchair` (checkbox)
+- `preferences` (long text — restaurants/vineyards mentioned positively)
+- `operational_notes` (long text — passed to the composer verbatim)
+
+There is no stay-status column: it is derived at lookup (see above).
+
 ### `KnowledgeBase`
 Property-fact FAQs. Bot answers directly (no handoff) when parser classifies `general_info` into one of these `topic_key`s with confidence ≥ 0.7.
 - `topic_key` (string, e.g. `pool_heated`, `sleeps`, `location`)
 - `question_examples` (long text — comma-separated phrasings for parser prompt)
 - `answer` (long text, supports `{name}` placeholder)
+- `audience` (single select — see below; blank reads as `all`)
 - `active` (checkbox)
+
+`audience` gates who may be told the answer, and is how sensitive operational
+detail (WiFi password, door codes) stays out of a prospect's reply:
+
+| value | visible to |
+|---|---|
+| `all` | everyone, including a cold prospect (the default) |
+| `pre_stay` | future guests and in-house guests |
+| `in_stay` | in-house guests only |
+| `sensitive` | in-house guests only, and kept out of any shared document |
+
+`audiencesForMode()` in `knowledge-base.service.ts` maps a `GuestMode` to the
+allowed set. The gate applies to `listTopics` as well as `render`: if a
+prospect's parser never learns `wifi_password` exists, it can never ask for it,
+so the answer can never be fetched by mistake.
 
 ### `MessageLog`
 - `phone`
@@ -448,8 +576,29 @@ CLAUDE_RESPONSE_MODEL=claude-sonnet-4-6
 PORT=3000
 NODE_ENV=development
 LOG_LEVEL=debug
-TZ=UTC              # pin the process timezone — see "Dates & timezones"
+TZ=UTC                  # pin the process timezone — see "Dates & timezones"
+DEFAULT_COUNTRY_CODE=44 # used by normalizePhone for national-format numbers
 ```
+
+## Backfill
+
+`npm run backfill:guests` populates the `Guests` table from historical
+SuperControl booking emails, so the CRM isn't empty on day one. It scans the
+**whole** mailbox (not just unseen), parses each booking email with the same
+parser the live watcher uses, upserts on `booking_ref`, and seeds a
+`Conversations` row per guest (lifecycle `Booked` for future/current stays).
+
+It **never marks mail `\Seen`, never sends a WhatsApp message and never
+schedules a follow-up**, and is dry-run by default:
+
+```
+npm run backfill:guests                # prints what it would write
+npm run backfill:guests -- --commit    # actually writes
+npm run backfill:guests -- --limit 20  # newest 20 matches only
+```
+
+Services are wired by hand in the script rather than via `NestFactory` —
+booting `AppModule` would also start the live email watcher and every cron.
 
 ---
 

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AvailabilityService } from '../availability/availability.service';
 import { BookingRulesService } from '../booking-rules/booking-rules.service';
+import { parseIsoDate } from '../common/dates';
 import {
   ComposerService,
   CompositionFact,
@@ -14,9 +15,18 @@ import {
 } from '../conversation/conversation.service';
 import { FollowUpsService } from '../follow-ups/follow-ups.service';
 import { Fragment, FragmentsService } from '../fragments/fragments.service';
+import {
+  GuestContext,
+  GuestMode,
+  GuestsService,
+} from '../guests/guests.service';
 import { HelpersService, WeekWithPrice } from '../helpers/helpers.service';
 import { HoldsService } from '../holds/holds.service';
-import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
+import {
+  audiencesForMode,
+  KbAudience,
+  KnowledgeBaseService,
+} from '../knowledge-base/knowledge-base.service';
 import { LoggerService } from '../logger/logger.service';
 import { MessageLogService } from '../messagelog/messagelog.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -43,6 +53,22 @@ const CLOSER_INTENTS = new Set<string>(['acknowledgment', 'polite_close']);
 const FAREWELL_RE =
   /\b(bye|goodbye|good\s?night|see\s+(you|ya)|take\s+care|cheers|ciao|that'?s\s+(it|all))\b/i;
 
+// A guest with a paid booking on the calendar. They are not a lead: no booking
+// nudge, no marketing link, no "still thinking it over?" chase. Guests on a
+// hold, and past guests asking about a return visit, are still being sold to.
+const CONFIRMED_GUEST_MODES = new Set<GuestMode>([
+  'future_guest',
+  'current_guest',
+]);
+
+const PROSPECT_CONTEXT: GuestContext = {
+  mode: 'prospect',
+  guest: null,
+  previousStays: 0,
+  lastStay: null,
+  hold: null,
+};
+
 type IncomingMessage = { from: string; text: string; profileName?: string };
 
 type MergedIntent = {
@@ -62,6 +88,7 @@ export class MessageHandlerService {
     private readonly pricing: PricingService,
     private readonly bookingRules: BookingRulesService,
     private readonly holds: HoldsService,
+    private readonly guests: GuestsService,
     private readonly followUps: FollowUpsService,
     private readonly templates: TemplatesService,
     private readonly composer: ComposerService,
@@ -155,12 +182,27 @@ export class MessageHandlerService {
       return;
     }
 
-    const storedName = state.customerName ?? msg.profileName ?? null;
     const previousIntent = state.lastIntent;
+
+    // Who are we talking to? Resolved before anything else so the parser's
+    // topic list, the facts and the tone all match the guest's stage of the
+    // journey. Never throws — an unrecognised number is just a prospect, which
+    // is exactly how the bot behaved before this existed.
+    const guest = await this.guests.resolveContext(msg.from);
+
+    // The name on the booking beats the WhatsApp profile name, which is
+    // whatever the guest happens to have set on their handset.
+    const storedName =
+      state.customerName ??
+      this.bookingFirstName(guest) ??
+      msg.profileName ??
+      null;
 
     try {
       const history = await this.messageLog.recent(msg.from, HISTORY_LIMIT);
-      const kbTopics = await this.fetchTopicHintsSafe();
+      const kbTopics = await this.fetchTopicHintsSafe(
+        audiencesForMode(guest.mode),
+      );
       const parsed = await this.parser.parse(msg.text, history, kbTopics);
       const merged = this.mergeWithPending(
         {
@@ -204,6 +246,7 @@ export class MessageHandlerService {
         merged,
         history,
         previousIntent,
+        guest,
       );
     } catch (err) {
       const error = (err as Error).message;
@@ -228,6 +271,7 @@ export class MessageHandlerService {
     merged: MergedIntent,
     history: HistoryMessage[],
     previousIntent: string | null,
+    guest: GuestContext,
   ): Promise<void> {
     const name = merged.customerName ?? '';
     const isFarewell =
@@ -249,7 +293,7 @@ export class MessageHandlerService {
         parsed.intent === 'availability_inquiry' ||
         parsed.intent === 'polite_close')
     ) {
-      await this.handleAvailability(from, merged);
+      await this.handleAvailability(from, merged, guest);
       return;
     }
 
@@ -261,10 +305,10 @@ export class MessageHandlerService {
     switch (intent) {
       case 'greeting':
         if (merged.checkIn && merged.checkOut) {
-          await this.handleAvailability(from, merged);
+          await this.handleAvailability(from, merged, guest);
           return;
         }
-        await this.composeOrFallback(from, parsed, merged, history, {
+        await this.composeOrFallback(from, parsed, merged, history, guest, {
           scenario: 'greeting',
           fallbackKey: 'greeting_ask_dates',
         });
@@ -273,7 +317,7 @@ export class MessageHandlerService {
       case 'availability_inquiry':
       case 'pricing_inquiry':
         if (parsed.monthQuery || parsed.monthRangeQuery) {
-          await this.handleMonthQuery(from, parsed, merged, history);
+          await this.handleMonthQuery(from, parsed, merged, history, guest);
           return;
         }
         // Customer asked for availability without giving fresh dates this turn.
@@ -297,21 +341,21 @@ export class MessageHandlerService {
           (merged.checkIn && !merged.checkOut) ||
           (!merged.checkIn && merged.checkOut)
         ) {
-          await this.handlePartialDates(from, parsed, merged, history);
+          await this.handlePartialDates(from, parsed, merged, history, guest);
           return;
         }
         if (!merged.checkIn || !merged.checkOut) {
-          await this.composeOrFallback(from, parsed, merged, history, {
+          await this.composeOrFallback(from, parsed, merged, history, guest, {
             scenario: 'dates_unclear',
             fallbackKey: 'dates_unclear_ask_clarify',
           });
           return;
         }
-        await this.handleAvailability(from, merged);
+        await this.handleAvailability(from, merged, guest);
         return;
 
       case 'general_info':
-        await this.handleGeneralInfo(from, parsed, merged, history);
+        await this.handleGeneralInfo(from, parsed, merged, history, guest);
         return;
 
       case 'booking_confirmation': {
@@ -359,7 +403,7 @@ export class MessageHandlerService {
         }
         // A farewell gets a plain warm goodbye — never the polite_close
         // hold-offer nudge ("happy to hold dates while you decide").
-        await this.composeOrFallback(from, parsed, merged, history, {
+        await this.composeOrFallback(from, parsed, merged, history, guest, {
           scenario:
             parsed.intent === 'polite_close' && !isFarewell
               ? 'polite_close'
@@ -369,7 +413,7 @@ export class MessageHandlerService {
         return;
 
       case 'correction':
-        await this.composeOrFallback(from, parsed, merged, history, {
+        await this.composeOrFallback(from, parsed, merged, history, guest, {
           scenario: 'correction',
           fallbackKey: 'unclear_handoff',
         });
@@ -388,7 +432,7 @@ export class MessageHandlerService {
 
       case 'off_topic_or_unclear':
       default:
-        await this.composeOrFallback(from, parsed, merged, history, {
+        await this.composeOrFallback(from, parsed, merged, history, guest, {
           scenario: 'unclear',
           fallbackKey: 'unclear_handoff',
         });
@@ -399,6 +443,7 @@ export class MessageHandlerService {
   private async handleAvailability(
     from: string,
     merged: MergedIntent,
+    guest: GuestContext = PROSPECT_CONTEXT,
   ): Promise<void> {
     if (!merged.checkIn || !merged.checkOut) return;
     const name = merged.customerName ?? '';
@@ -519,18 +564,7 @@ export class MessageHandlerService {
           extra: { year: merged.checkIn.getUTCFullYear() },
         },
       );
-      try {
-        await this.followUps.schedule(from);
-      } catch (err) {
-        this.logger.warn(
-          'follow-ups',
-          'schedule after pending-pricing failed',
-          {
-            from,
-            error: (err as Error).message,
-          },
-        );
-      }
+      await this.scheduleFollowUpSafe(from, guest, 'pending-pricing');
       return;
     }
 
@@ -564,14 +598,7 @@ export class MessageHandlerService {
 
     await this.recordQuoteSafe(from, datesLabel, quote.total, 'available');
 
-    try {
-      await this.followUps.schedule(from);
-    } catch (err) {
-      this.logger.warn('follow-ups', 'schedule after quote failed', {
-        from,
-        error: (err as Error).message,
-      });
-    }
+    await this.scheduleFollowUpSafe(from, guest, 'quote');
   }
 
   private async handleHoldRequest(
@@ -688,14 +715,16 @@ export class MessageHandlerService {
     parsed: ParseResult,
     merged: MergedIntent,
     history: HistoryMessage[],
+    guest: GuestContext = PROSPECT_CONTEXT,
   ): Promise<void> {
     const knowledgeFacts = await this.assembleKnowledgeFacts(
       parsed.topicKeys,
       merged.customerName,
+      audiencesForMode(guest.mode),
     );
 
     if (knowledgeFacts.length === 0) {
-      await this.composeOrFallback(from, parsed, merged, history, {
+      await this.composeOrFallback(from, parsed, merged, history, guest, {
         scenario: 'faq_unknown',
         fallbackKey: 'faq_unknown_handoff',
       });
@@ -707,7 +736,7 @@ export class MessageHandlerService {
       return;
     }
 
-    await this.composeOrFallback(from, parsed, merged, history, {
+    await this.composeOrFallback(from, parsed, merged, history, guest, {
       scenario: 'general_info',
       fallbackKey: 'faq_unknown_handoff',
       knowledgeFragments: [],
@@ -720,6 +749,7 @@ export class MessageHandlerService {
     parsed: ParseResult,
     merged: MergedIntent,
     history: HistoryMessage[],
+    guest: GuestContext = PROSPECT_CONTEXT,
   ): Promise<void> {
     const name = merged.customerName ?? '';
     const years = this.monthQueryYears(parsed);
@@ -791,7 +821,7 @@ export class MessageHandlerService {
       }
     }
 
-    await this.composeOrFallback(from, parsed, merged, history, {
+    await this.composeOrFallback(from, parsed, merged, history, guest, {
       scenario: 'month_query',
       fallbackKey: 'dates_unclear_ask_clarify',
       extraFacts: facts,
@@ -812,6 +842,7 @@ export class MessageHandlerService {
     parsed: ParseResult,
     merged: MergedIntent,
     history: HistoryMessage[],
+    guest: GuestContext = PROSPECT_CONTEXT,
   ): Promise<void> {
     const target = merged.checkIn
       ? merged.checkIn
@@ -852,7 +883,7 @@ export class MessageHandlerService {
     const freeWeek = checked.find((c) => c.free);
     const name = merged.customerName ?? '';
 
-    await this.composeOrFallback(from, parsed, merged, history, {
+    await this.composeOrFallback(from, parsed, merged, history, guest, {
       scenario: 'partial_dates',
       // If both weeks are reserved we already know the answer — the safe
       // fallback is the "reserved" template, not a re-ask for dates.
@@ -892,14 +923,7 @@ export class MessageHandlerService {
         this.isoDate(freeWeek.checkIn),
         this.isoDate(freeWeek.checkOut),
       );
-      try {
-        await this.followUps.schedule(from);
-      } catch (err) {
-        this.logger.warn('follow-ups', 'schedule after partial-dates failed', {
-          from,
-          error: (err as Error).message,
-        });
-      }
+      await this.scheduleFollowUpSafe(from, guest, 'partial-dates');
       return;
     }
     await this.recordQuoteSafe(from, datesLabel, 0, 'unavailable');
@@ -928,6 +952,7 @@ export class MessageHandlerService {
     parsed: ParseResult,
     merged: MergedIntent,
     history: HistoryMessage[],
+    guest: GuestContext,
     options: {
       scenario: string;
       fallbackKey: string;
@@ -940,10 +965,15 @@ export class MessageHandlerService {
       parsed,
       merged,
       history,
+      guest,
       options,
     );
     const result = await this.composer.compose(pkg);
-    const skipWebsiteLink = SCENARIOS_SKIP_WEBSITE_LINK.has(options.scenario);
+    // A guest who has already paid doesn't need the sales link bolted onto an
+    // answer about bin day.
+    const skipWebsiteLink =
+      SCENARIOS_SKIP_WEBSITE_LINK.has(options.scenario) ||
+      this.isConfirmedGuest(guest);
 
     if (result.ok) {
       const finalText = skipWebsiteLink
@@ -981,6 +1011,7 @@ export class MessageHandlerService {
     parsed: ParseResult,
     merged: MergedIntent,
     history: HistoryMessage[],
+    guest: GuestContext,
     options: {
       scenario: string;
       knowledgeFragments?: Fragment[];
@@ -1006,7 +1037,16 @@ export class MessageHandlerService {
       });
     }
 
-    if (SCENARIOS_WITH_WEBSITE.has(options.scenario)) {
+    // Who we're talking to, and how that changes the reply. Both facts are
+    // omitted entirely for a prospect, so the prospect funnel composes exactly
+    // as it did before guest recognition existed.
+    const guestFacts = this.guestContextFacts(guest);
+    facts.push(...guestFacts);
+
+    if (
+      SCENARIOS_WITH_WEBSITE.has(options.scenario) &&
+      !this.isConfirmedGuest(guest)
+    ) {
       const websiteText = `Point the guest to ${WEBSITE_URL} for more detail on the topic they asked about, in a single short sentence (e.g. "More on the website if helpful: ${WEBSITE_URL}").`;
       facts.push({ key: 'website', text: websiteText });
     }
@@ -1021,12 +1061,18 @@ export class MessageHandlerService {
     // just quoted options. Without this, the bot lists weeks then ends flat,
     // never offering to hold.
     const SCENARIOS_FORCE_NUDGE = new Set(['month_query', 'polite_close']);
+    // ...but never at a guest who has already booked. Offering to hold dates
+    // for someone who arrives next month reads as though we've forgotten them.
     const needsNudgeToBook =
-      parsed.highIntentSignal || SCENARIOS_FORCE_NUDGE.has(options.scenario);
+      !this.isConfirmedGuest(guest) &&
+      (parsed.highIntentSignal || SCENARIOS_FORCE_NUDGE.has(options.scenario));
 
     return {
-      scenarioHint: options.scenario,
-      guestName: merged.customerName,
+      scenarioHint:
+        guest.mode === 'prospect'
+          ? options.scenario
+          : `${options.scenario} (${guest.mode})`,
+      guestName: merged.customerName ?? this.bookingFirstName(guest),
       isFirstMessage: history.length <= 1,
       toneFlags: {
         needsGreeting: parsed.needsGreeting,
@@ -1040,6 +1086,143 @@ export class MessageHandlerService {
       nudges: nudges.map((f) => f.text),
       history,
     };
+  }
+
+  /**
+   * Queues the 24h/7d chase — unless the enquirer already has a booking on the
+   * calendar. Chasing a confirmed guest with "still thinking it over?" is the
+   * single most obviously wrong thing the bot could do to them.
+   */
+  private async scheduleFollowUpSafe(
+    from: string,
+    guest: GuestContext,
+    stage: string,
+  ): Promise<void> {
+    if (this.isConfirmedGuest(guest)) {
+      this.logger.info('follow-ups', 'skipped: enquirer is a confirmed guest', {
+        from,
+        stage,
+        mode: guest.mode,
+      });
+      return;
+    }
+    try {
+      await this.followUps.schedule(from);
+    } catch (err) {
+      this.logger.warn('follow-ups', `schedule after ${stage} failed`, {
+        from,
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  /** A guest with a paid booking on the calendar — not a lead any more. */
+  private isConfirmedGuest(guest: GuestContext): boolean {
+    return CONFIRMED_GUEST_MODES.has(guest.mode);
+  }
+
+  /** First name from the booking, used when the chat never gave us one. */
+  private bookingFirstName(guest: GuestContext): string | null {
+    const full = guest.guest?.fields.guest_name?.trim();
+    if (!full) return null;
+    return full.split(/\s+/)[0] ?? null;
+  }
+
+  /**
+   * The structured guest record the composer sees, plus the behaviour rules for
+   * that stage of the journey. Returns nothing for a prospect, so the existing
+   * funnel is byte-for-byte unchanged.
+   *
+   * Nothing financial is included: the parser never captures it, and the
+   * composer must never be in a position to quote a balance.
+   */
+  private guestContextFacts(guest: GuestContext): CompositionFact[] {
+    if (guest.mode === 'prospect') return [];
+
+    const facts: CompositionFact[] = [];
+    const context = this.describeGuest(guest);
+    if (context) facts.push({ key: 'guest_context', text: context });
+
+    const guidance = this.modeGuidance(guest.mode);
+    if (guidance) facts.push({ key: 'guest_mode_guidance', text: guidance });
+
+    return facts;
+  }
+
+  private describeGuest(guest: GuestContext): string | null {
+    if (guest.mode === 'hold' && guest.hold) {
+      const h = guest.hold.fields;
+      return [
+        'This person already has dates held, so they are part-way to booking, not a cold enquiry.',
+        `Held: ${this.formatDate(parseIsoDate(h.check_in))} to ${this.formatDate(parseIsoDate(h.check_out))}.`,
+        `The hold runs until ${this.formatDate(new Date(h.hold_expires_at))}.`,
+      ].join(' ');
+    }
+
+    const g = guest.guest?.fields;
+    if (!g?.check_in || !g.check_out) return null;
+
+    const checkIn = parseIsoDate(g.check_in);
+    const checkOut = parseIsoDate(g.check_out);
+    const nights = Math.round(
+      (checkOut.getTime() - checkIn.getTime()) / DAY_MS,
+    );
+
+    const lines = [
+      `${g.guest_name || 'This guest'} has a confirmed booking. They are a guest, not a prospect.`,
+      `Arrival ${this.formatDate(checkIn)}, departure ${this.formatDate(checkOut)} (${nights} nights).`,
+      `Party: ${this.describeParty(g.adults, g.children, g.infants)}.`,
+      `Booking reference ${g.booking_ref ?? 'unknown'}.`,
+      `Stay status: ${guest.mode.replace('_guest', '')}.`,
+      `Previous stays: ${guest.previousStays}.`,
+    ];
+
+    if (guest.lastStay && guest.mode !== 'past_guest') {
+      lines.push(
+        `They last stayed ${this.formatDate(parseIsoDate(guest.lastStay.checkIn))}.`,
+      );
+    }
+    if (typeof g.dogs === 'number' && g.dogs > 0) {
+      lines.push(`They travel with ${g.dogs === 1 ? 'a dog' : `${g.dogs} dogs`}.`);
+    }
+    if (g.cot_or_highchair) {
+      lines.push('A cot or highchair has been used on a previous stay.');
+    }
+    if (g.preferences?.trim()) {
+      lines.push(`Noted preferences: ${g.preferences.trim()}`);
+    }
+    if (g.operational_notes?.trim()) {
+      lines.push(`Jim's notes on this guest: ${g.operational_notes.trim()}`);
+    }
+
+    return lines.join(' ');
+  }
+
+  private describeParty(
+    adults?: number,
+    children?: number,
+    infants?: number,
+  ): string {
+    const parts: string[] = [];
+    if (adults) parts.push(`${adults} adult${adults === 1 ? '' : 's'}`);
+    if (children) parts.push(`${children} child${children === 1 ? '' : 'ren'}`);
+    if (infants) parts.push(`${infants} infant${infants === 1 ? '' : 's'}`);
+    return parts.length > 0 ? parts.join(', ') : 'party size not recorded';
+  }
+
+  private modeGuidance(mode: GuestMode): string | null {
+    switch (mode) {
+      case 'hold':
+        return "These dates are already held for this person, so stop selling the house and help them over the line. Answer what they ask, and if it fits naturally, one short line about confirming while the hold lasts. Do not re-pitch the property and do not repeat the full description.";
+      case 'future_guest':
+        return "This is a confirmed guest counting down to their stay, NOT a prospect. Never pitch the house, never quote a price, never offer to hold dates, never send a booking link, and never suggest they book. Answer their pre-arrival question directly and warmly, and reference their arrival date where it genuinely helps. If you have no fact for what they asked, say you'll come back with it rather than guessing.";
+      case 'current_guest':
+        return "This guest is at the house right now. You are the host checking in, not a booking agent. Answer the practical question directly and briefly. Never pitch, never quote, never mention booking or the website. If the question is about something broken or urgent, say you'll deal with it personally rather than offering instructions you don't have.";
+      case 'past_guest':
+        return "This person has stayed before. Acknowledge that once, warmly and briefly, if it fits naturally, then answer what they actually asked. Do not list what you remember about them and do not make the acknowledgement the whole reply. If they are asking about new dates, treat that part exactly as you would any enquiry.";
+      default:
+        return null;
+    }
   }
 
   private async fetchKnowledgeFragmentsSafe(
@@ -1071,13 +1254,18 @@ export class MessageHandlerService {
     }
   }
 
-  private async fetchTopicHintsSafe(): Promise<
-    Array<{ topicKey: string; questionExamples: string }>
-  > {
+  /**
+   * Topic hints handed to the parser. Gated by audience as well as `render` is:
+   * if a prospect's parser never learns `wifi_password` exists, it cannot ask
+   * for it, so the answer can never be fetched by mistake.
+   */
+  private async fetchTopicHintsSafe(
+    audiences: KbAudience[] = ['all'],
+  ): Promise<Array<{ topicKey: string; questionExamples: string }>> {
     try {
       const [fragments, kbTopics] = await Promise.all([
         this.fragments.listByCategory('knowledge').catch(() => []),
-        this.knowledgeBase.listTopics().catch(() => []),
+        this.knowledgeBase.listTopics(audiences).catch(() => []),
       ]);
       const examplesByKey = new Map<string, string>();
       for (const t of kbTopics)
@@ -1101,6 +1289,7 @@ export class MessageHandlerService {
   private async assembleKnowledgeFacts(
     topicKeys: string[],
     customerName: string | null,
+    audiences: KbAudience[] = ['all'],
   ): Promise<CompositionFact[]> {
     if (topicKeys.length === 0) return [];
 
@@ -1118,9 +1307,11 @@ export class MessageHandlerService {
 
     for (const key of missing) {
       try {
-        const answer = await this.knowledgeBase.render(key, {
-          name: customerName ?? '',
-        });
+        const answer = await this.knowledgeBase.render(
+          key,
+          { name: customerName ?? '' },
+          audiences,
+        );
         if (answer) facts.push({ key: `kb_${key}`, text: answer });
       } catch (err) {
         this.logger.warn('templates', 'KB fallback failed', {

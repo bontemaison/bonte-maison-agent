@@ -21,6 +21,7 @@
  */
 import { ImapFlow } from 'imapflow';
 import {
+  isBookingRecordEmail,
   matchSubject,
   SUPERCONTROL_CONFIG,
 } from '../src/email-integration/subject-matcher';
@@ -67,7 +68,7 @@ const port = process.env.SUPERCONTROL_IMAP_PORT
   : 993;
 
 const allowedSenders = new Set<string>([
-  SUPERCONTROL_CONFIG.senderEmail.toLowerCase(),
+  ...SUPERCONTROL_CONFIG.senderEmails.map((s) => s.toLowerCase()),
   ...(process.env.SUPERCONTROL_EXTRA_SENDERS
     ? process.env.SUPERCONTROL_EXTRA_SENDERS.split(',')
         .map((s) => s.trim().toLowerCase())
@@ -129,11 +130,13 @@ async function pollOnce(all: boolean): Promise<void> {
 
         const verdict = !senderOk
           ? 'SKIP (sender not allowlisted)'
-          : !key
-            ? 'SKIP (subject no match)'
-            : !toAddr
-              ? 'SKIP (no To address)'
-              : `MATCH → ${key}`;
+          : isBookingRecordEmail(subject)
+            ? 'MATCH → booking record (writes a Guests row, sends nothing)'
+            : !key
+              ? 'SKIP (subject no match)'
+              : !toAddr
+                ? 'SKIP (no To address)'
+                : `MATCH → ${key}`;
 
         console.log(
           `[${ts()}]  • uid=${msg.uid} seen=${seen ? 'y' : 'n'} from="${

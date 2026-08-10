@@ -1,11 +1,27 @@
 import { Injectable } from '@nestjs/common';
 import { AirtableService } from '../airtable/airtable.service';
+import type { GuestMode } from '../guests/guests.service';
 import { LoggerService } from '../logger/logger.service';
+
+/**
+ * Who a knowledge-base row may be shown to.
+ *
+ * - `all` — safe for anyone, including a cold prospect. The default when the
+ *   Airtable column is blank, so existing rows keep working untouched.
+ * - `pre_stay` — only useful once a booking exists (arrival process, what to
+ *   bring, pre-arrival shopping).
+ * - `in_stay` — operational detail for a guest who is at the house (BBQ, hot
+ *   tub, bin day, nearest pharmacy).
+ * - `sensitive` — must never reach anyone but a guest currently in residence.
+ *   The WiFi password lives here.
+ */
+export type KbAudience = 'all' | 'pre_stay' | 'in_stay' | 'sensitive';
 
 type KbFields = {
   topic_key?: string;
   question_examples?: string;
   answer?: string;
+  audience?: KbAudience;
   active?: boolean;
 };
 
@@ -18,6 +34,22 @@ export type KbVars = Record<string, string | number | boolean>;
 
 const PLACEHOLDER = /\{(\w+)\}/g;
 
+const DEFAULT_AUDIENCES: KbAudience[] = ['all'];
+
+const AUDIENCES_BY_MODE: Record<GuestMode, KbAudience[]> = {
+  prospect: ['all'],
+  hold: ['all'],
+  future_guest: ['all', 'pre_stay'],
+  current_guest: ['all', 'pre_stay', 'in_stay', 'sensitive'],
+  // A past guest is a prospect again as far as house secrets go — they no
+  // longer need the door code or the WiFi password.
+  past_guest: ['all'],
+};
+
+export function audiencesForMode(mode: GuestMode): KbAudience[] {
+  return AUDIENCES_BY_MODE[mode] ?? DEFAULT_AUDIENCES;
+}
+
 @Injectable()
 export class KnowledgeBaseService {
   constructor(
@@ -25,13 +57,23 @@ export class KnowledgeBaseService {
     private readonly logger: LoggerService,
   ) {}
 
-  async listTopics(): Promise<KbTopic[]> {
+  /**
+   * Topics the parser is allowed to name for this audience.
+   *
+   * The gate has to apply here as well as in `render`: if a prospect's parser
+   * never learns that `wifi_password` exists, it can never ask for it, so the
+   * answer can never be fetched by mistake.
+   */
+  async listTopics(
+    audiences: KbAudience[] = DEFAULT_AUDIENCES,
+  ): Promise<KbTopic[]> {
     const rows = await this.airtable.list<KbFields>('KnowledgeBase');
     return rows
       .filter(
         (r) =>
           typeof r.fields.topic_key === 'string' &&
-          r.fields.active !== false,
+          r.fields.active !== false &&
+          this.isVisible(r.fields.audience, audiences),
       )
       .map((r) => ({
         topicKey: r.fields.topic_key as string,
@@ -39,7 +81,11 @@ export class KnowledgeBaseService {
       }));
   }
 
-  async render(topicKey: string, vars: KbVars): Promise<string | null> {
+  async render(
+    topicKey: string,
+    vars: KbVars,
+    audiences: KbAudience[] = DEFAULT_AUDIENCES,
+  ): Promise<string | null> {
     const rows = await this.airtable.list<KbFields>('KnowledgeBase', {
       filterByFormula: `{topic_key}='${topicKey}'`,
       maxRecords: 1,
@@ -50,7 +96,24 @@ export class KnowledgeBaseService {
     );
     if (!entry) return null;
 
+    if (!this.isVisible(entry.fields.audience, audiences)) {
+      this.logger.info('knowledge-base', 'topic withheld from this audience', {
+        topicKey,
+        rowAudience: entry.fields.audience ?? 'all',
+        allowed: audiences,
+      });
+      return null;
+    }
+
     return this.substitute(entry.fields.answer as string, vars, topicKey);
+  }
+
+  /** A blank column means `all`, so rows written before this existed still show. */
+  private isVisible(
+    rowAudience: KbAudience | undefined,
+    allowed: KbAudience[],
+  ): boolean {
+    return allowed.includes(rowAudience ?? 'all');
   }
 
   private substitute(text: string, vars: KbVars, topicKey: string): string {

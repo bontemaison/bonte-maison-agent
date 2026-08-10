@@ -7,14 +7,25 @@
  * Idempotent: upserts by topic_key. Edit KB_ENTRIES below and re-run.
  *
  * Airtable table must have fields: topic_key (string), question_examples (long text),
- * answer (long text), active (checkbox).
+ * answer (long text), audience (single select), active (checkbox).
+ *
+ * `audience` controls who may be told the answer:
+ *   all       — anyone, including a cold prospect (the default when blank)
+ *   pre_stay  — confirmed future guests and in-house guests
+ *   in_stay   — in-house guests only
+ *   sensitive — in-house guests only, and never in a document Jim doesn't
+ *               control (WiFi password, door codes)
  */
 import Airtable from 'airtable';
+
+type KbAudience = 'all' | 'pre_stay' | 'in_stay' | 'sensitive';
 
 type KbRow = {
   topic_key: string;
   question_examples: string;
   answer: string;
+  /** Omit for public content — a blank column reads as `all`. */
+  audience?: KbAudience;
   active?: boolean;
 };
 
@@ -125,6 +136,7 @@ type FieldSet = {
   topic_key: string;
   question_examples: string;
   answer: string;
+  audience: KbAudience;
   active?: boolean;
 };
 
@@ -148,7 +160,10 @@ async function upsert(row: KbRow): Promise<'created' | 'updated' | 'unchanged'> 
   const fields: FieldSet = {
     topic_key: row.topic_key,
     question_examples: row.question_examples,
-    answer: row.answer
+    answer: row.answer,
+    // Written explicitly on every row so the column is never left blank and
+    // relying on the implicit default.
+    audience: row.audience ?? 'all',
   };
 
   if (existing.length === 0) {
@@ -160,6 +175,7 @@ async function upsert(row: KbRow): Promise<'created' | 'updated' | 'unchanged'> 
   if (
     current.fields.question_examples === fields.question_examples &&
     current.fields.answer === fields.answer &&
+    (current.fields.audience ?? 'all') === fields.audience &&
     current.fields.active === fields.active
   ) {
     return 'unchanged';

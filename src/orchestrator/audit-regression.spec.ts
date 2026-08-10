@@ -15,6 +15,7 @@ import { ConversationService } from '../conversation/conversation.service';
 import { FollowUpsService } from '../follow-ups/follow-ups.service';
 import { FragmentsService } from '../fragments/fragments.service';
 import { HelpersService } from '../helpers/helpers.service';
+import { GuestsService } from '../guests/guests.service';
 import { HoldsService } from '../holds/holds.service';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
 import { LoggerService } from '../logger/logger.service';
@@ -151,6 +152,17 @@ const buildHandler = (w: Wires = {}): MessageHandlerService => {
         fields: { hold_expires_at: new Date('2027-01-01').toISOString() },
       }),
     } as unknown as HoldsService);
+  // Every phone in this regression suite is an unrecognised prospect, which is
+  // the behaviour these assertions were written against.
+  const guests = {
+    resolveContext: jest.fn().mockResolvedValue({
+      mode: 'prospect',
+      guest: null,
+      previousStays: 0,
+      lastStay: null,
+      hold: null,
+    }),
+  } as unknown as GuestsService;
   const availability =
     w.availability ??
     ({
@@ -204,6 +216,7 @@ const buildHandler = (w: Wires = {}): MessageHandlerService => {
     pricing,
     bookingRules,
     holds,
+    guests,
     followUps,
     templates,
     composer,
