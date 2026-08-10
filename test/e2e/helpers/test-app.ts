@@ -78,11 +78,8 @@ export async function buildHarness(
   process.env.ANTHROPIC_API_KEY = 'test';
   process.env.ICAL_URL = 'http://example.invalid/ical';
   process.env.LOG_LEVEL = 'error';
-  process.env.WHATSAPP_PROVIDER = 'cloud_api';
   process.env.WHATSAPP_PHONE_NUMBER_ID = 'test';
-  process.env.WHATSAPP_ACCESS_TOKEN = 'test';
   process.env.WHATSAPP_VERIFY_TOKEN = 'test';
-  process.env.WHATSAPP_APP_SECRET = 'test';
 
   const airtable = new FakeAirtable();
   const parser = new FakeParser();

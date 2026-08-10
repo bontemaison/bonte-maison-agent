@@ -135,8 +135,7 @@ export class ParserService {
     const apiKey = config.get<string>('ANTHROPIC_API_KEY');
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY must be set');
     this.client = new Anthropic({ apiKey });
-    this.model =
-      config.get<string>('CLAUDE_MODEL') ?? 'claude-haiku-4-5-20251001';
+    this.model = config.get<string>('CLAUDE_MODEL') ?? 'claude-sonnet-5';
   }
 
   async parse(

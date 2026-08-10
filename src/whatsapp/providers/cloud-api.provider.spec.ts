@@ -1,5 +1,4 @@
 import axios from 'axios';
-import * as crypto from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../../logger/logger.service';
 import { CloudApiProvider } from './cloud-api.provider';
@@ -12,8 +11,7 @@ const makeConfig = (overrides: Record<string, string | undefined> = {}): ConfigS
     get: (key: string) => {
       const defaults: Record<string, string> = {
         WHATSAPP_PHONE_NUMBER_ID: 'phone-id-123',
-        WHATSAPP_ACCESS_TOKEN: 'access-token',
-        WHATSAPP_APP_SECRET: 'app-secret',
+        DUALHOOK_LIVE_KEY: 'dh_live_abc',
         WHATSAPP_VERIFY_TOKEN: 'verify-token',
       };
       return key in overrides ? overrides[key] : defaults[key];
@@ -28,9 +26,6 @@ const makeLogger = (): LoggerService =>
     error: jest.fn(),
   }) as unknown as LoggerService;
 
-const sign = (raw: Buffer, secret = 'app-secret') =>
-  'sha256=' + crypto.createHmac('sha256', secret).update(raw).digest('hex');
-
 describe('CloudApiProvider', () => {
   beforeEach(() => jest.clearAllMocks());
 
@@ -41,30 +36,17 @@ describe('CloudApiProvider', () => {
       ).toThrow();
     });
 
-    it('throws when WHATSAPP_ACCESS_TOKEN is missing', () => {
+    it('throws when DUALHOOK_LIVE_KEY is missing', () => {
       expect(
-        () => new CloudApiProvider(makeConfig({ WHATSAPP_ACCESS_TOKEN: undefined }), makeLogger()),
-      ).toThrow();
-    });
-
-    it('throws when WHATSAPP_PROVIDER=dualhook but DUALHOOK_LIVE_KEY is missing', () => {
-      expect(
-        () =>
-          new CloudApiProvider(
-            makeConfig({ WHATSAPP_PROVIDER: 'dualhook', DUALHOOK_LIVE_KEY: undefined }),
-            makeLogger(),
-          ),
+        () => new CloudApiProvider(makeConfig({ DUALHOOK_LIVE_KEY: undefined }), makeLogger()),
       ).toThrow(/DUALHOOK_LIVE_KEY/);
     });
   });
 
   describe('Dualhook relay', () => {
-    const dualhookConfig = () =>
-      makeConfig({ WHATSAPP_PROVIDER: 'dualhook', DUALHOOK_LIVE_KEY: 'dh_live_abc' });
-
     it('POSTs to api.dualhook.com with the dh_live_ key as bearer', async () => {
       mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.dh' }] } });
-      const provider = new CloudApiProvider(dualhookConfig(), makeLogger());
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
 
       await provider.sendMessage('628123456789', 'hello');
 
@@ -87,7 +69,7 @@ describe('CloudApiProvider', () => {
 
     it('routes templates through Dualhook too', async () => {
       mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.dht' }] } });
-      const provider = new CloudApiProvider(dualhookConfig(), makeLogger());
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
 
       await provider.sendTemplate('628', 'owner_notification', { body: 'alert' });
 
@@ -100,56 +82,19 @@ describe('CloudApiProvider', () => {
       );
     });
 
-    it('never sends the Meta access token to Dualhook', async () => {
+    // There is no provider switch any more: nothing may reach Meta's own
+    // host, because we no longer hold a Meta access token to authenticate
+    // with. A regression here would 401 in production.
+    it('never posts to graph.facebook.com', async () => {
       mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.dh' }] } });
-      const provider = new CloudApiProvider(dualhookConfig(), makeLogger());
+      const provider = new CloudApiProvider(makeConfig(), makeLogger());
 
       await provider.sendMessage('628', 'hi');
+      await provider.sendTemplate('628', 'tmpl', {});
 
-      const [, , cfg] = mockedAxios.post.mock.calls[0] as [
-        string,
-        unknown,
-        { headers: Record<string, string> },
-      ];
-      expect(cfg.headers.Authorization).not.toContain('access-token');
-    });
-
-    it('still posts to graph.facebook.com when provider is cloud_api', async () => {
-      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.m' }] } });
-      const provider = new CloudApiProvider(
-        makeConfig({ WHATSAPP_PROVIDER: 'cloud_api', DUALHOOK_LIVE_KEY: 'dh_live_abc' }),
-        makeLogger(),
-      );
-
-      await provider.sendMessage('628', 'hi');
-
-      expect(mockedAxios.post).toHaveBeenCalledWith(
-        expect.stringContaining('graph.facebook.com'),
-        expect.any(Object),
-        expect.objectContaining({
-          headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
-        }),
-      );
-    });
-
-    it('honours WHATSAPP_GRAPH_VERSION on the Dualhook host', async () => {
-      mockedAxios.post.mockResolvedValue({ data: { messages: [{ id: 'wamid.dh' }] } });
-      const provider = new CloudApiProvider(
-        makeConfig({
-          WHATSAPP_PROVIDER: 'dualhook',
-          DUALHOOK_LIVE_KEY: 'dh_live_abc',
-          WHATSAPP_GRAPH_VERSION: 'v23.0',
-        }),
-        makeLogger(),
-      );
-
-      await provider.sendMessage('628', 'hi');
-
-      expect(mockedAxios.post).toHaveBeenCalledWith(
-        'https://api.dualhook.com/v23.0/phone-id-123/messages',
-        expect.any(Object),
-        expect.any(Object),
-      );
+      for (const [url] of mockedAxios.post.mock.calls as Array<[string]>) {
+        expect(url).not.toContain('graph.facebook.com');
+      }
     });
   });
 
@@ -169,7 +114,7 @@ describe('CloudApiProvider', () => {
           text: { body: 'hello' },
         }),
         expect.objectContaining({
-          headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+          headers: expect.objectContaining({ Authorization: 'Bearer dh_live_abc' }),
         }),
       );
     });
@@ -454,62 +399,4 @@ describe('CloudApiProvider', () => {
     });
   });
 
-  describe('validateWebhookSignature', () => {
-    it('accepts a valid HMAC signature', () => {
-      const provider = new CloudApiProvider(makeConfig(), makeLogger());
-      const raw = Buffer.from('{"test":1}');
-      expect(
-        provider.validateWebhookSignature(raw, { 'x-hub-signature-256': sign(raw) }),
-      ).toBe(true);
-    });
-
-    it('rejects an incorrect signature', () => {
-      const provider = new CloudApiProvider(makeConfig(), makeLogger());
-      const raw = Buffer.from('{"test":1}');
-      expect(
-        provider.validateWebhookSignature(raw, { 'x-hub-signature-256': sign(raw, 'wrong') }),
-      ).toBe(false);
-    });
-
-    it('rejects when the signature header is missing', () => {
-      const provider = new CloudApiProvider(makeConfig(), makeLogger());
-      expect(provider.validateWebhookSignature(Buffer.from('{}'), {})).toBe(false);
-    });
-
-    it('returns true unconditionally when WHATSAPP_SKIP_SIGNATURE_CHECK=true', () => {
-      const logger = makeLogger();
-      const provider = new CloudApiProvider(
-        makeConfig({ WHATSAPP_SKIP_SIGNATURE_CHECK: 'true' }),
-        logger,
-      );
-      expect(provider.validateWebhookSignature(Buffer.from('{}'), {})).toBe(true);
-      expect(provider.validateWebhookSignature(Buffer.from('{}'), {
-        'x-hub-signature-256': 'sha256=wrong',
-      })).toBe(true);
-      expect(logger.warn).toHaveBeenCalledWith(
-        'whatsapp',
-        expect.stringContaining('WHATSAPP_SKIP_SIGNATURE_CHECK'),
-        expect.any(Object),
-      );
-    });
-  });
-
-  describe('verifyWebhook', () => {
-    it('returns the challenge when mode and token match', () => {
-      const provider = new CloudApiProvider(makeConfig(), makeLogger());
-      expect(provider.verifyWebhook('subscribe', 'verify-token', 'challenge-xyz')).toBe(
-        'challenge-xyz',
-      );
-    });
-
-    it('throws when the token does not match', () => {
-      const provider = new CloudApiProvider(makeConfig(), makeLogger());
-      expect(() => provider.verifyWebhook('subscribe', 'wrong', 'c')).toThrow();
-    });
-
-    it('throws when the mode is not subscribe', () => {
-      const provider = new CloudApiProvider(makeConfig(), makeLogger());
-      expect(() => provider.verifyWebhook('unsubscribe', 'verify-token', 'c')).toThrow();
-    });
-  });
 });

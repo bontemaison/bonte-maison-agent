@@ -3,18 +3,13 @@ import {
   Controller,
   ForbiddenException,
   Get,
-  Headers,
   HttpCode,
   Post,
   Query,
-  Req,
 } from '@nestjs/common';
-import type { Request } from 'express';
 import { LoggerService } from '../logger/logger.service';
 import { MessageHandlerService } from '../orchestrator/message-handler.service';
 import { WhatsappService } from './whatsapp.service';
-
-type RawRequest = Request & { rawBody?: Buffer };
 
 const DEDUP_TTL_MS = 10 * 60 * 1000;
 const DEDUP_MAX = 1000;
@@ -58,41 +53,13 @@ export class WebhookController {
     }
   }
 
+  // NOTE: this endpoint is unauthenticated. Meta signs webhooks with the
+  // BSP-owned app secret under Dualhook's Webhook Override, which we can never
+  // obtain, so HMAC verification is not possible here. Anyone who knows the
+  // URL can post a forged payload.
   @Post()
   @HttpCode(200)
-  async receive(
-    @Req() req: RawRequest,
-    @Headers('x-hub-signature-256') sig256: string | undefined,
-    @Headers('x-wati-token') watiToken: string | undefined,
-    @Body() body: unknown,
-  ): Promise<{ status: 'ok' }> {
-    const raw = req.rawBody;
-    if (!raw) {
-      this.logger.warn('whatsapp', 'dropping webhook: no rawBody (middleware misconfigured)', {});
-      return { status: 'ok' };
-    }
-
-    const headers: Record<string, string | undefined> = {
-      'x-hub-signature-256': sig256,
-      'x-wati-token': watiToken,
-    };
-
-    if (!this.whatsapp.validateWebhookSignature(raw, headers)) {
-      const debug = this.whatsapp.debugSignature(raw, headers);
-      this.logger.warn('whatsapp', 'dropping webhook: invalid signature', {
-        hasSignature: Boolean(sig256 ?? watiToken),
-        ...(debug ?? {}),
-        // Body preview helps confirm we're hashing what was actually
-        // delivered (e.g. no proxy re-encoding). Trim to keep logs sane.
-        bodyPreview: raw.subarray(0, 200).toString('utf8'),
-        // Full header dump: BSPs sometimes co-sign with a custom header
-        // (e.g. x-dualhook-signature) using a secret they DO share. Surfacing
-        // every header here makes that easy to spot.
-        allHeaders: req.headers,
-      });
-      return { status: 'ok' };
-    }
-
+  async receive(@Body() body: unknown): Promise<{ status: 'ok' }> {
     this.logger.debug('whatsapp', 'webhook payload received', { body });
 
     const message = this.whatsapp.parseWebhook(body);

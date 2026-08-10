@@ -9,9 +9,6 @@ const makeProvider = (): jest.Mocked<WhatsAppProvider> => ({
   sendTemplate: jest.fn().mockResolvedValue({}),
   parseWebhook: jest.fn().mockReturnValue(null),
   parseOutboundEcho: jest.fn().mockReturnValue(null),
-  validateWebhookSignature: jest.fn().mockReturnValue(true),
-  verifyWebhook: jest.fn().mockReturnValue('challenge'),
-  assignToHuman: jest.fn().mockResolvedValue(undefined),
 });
 
 const makeConversation = (canSend = true): ConversationService =>
@@ -133,20 +130,6 @@ describe('WhatsappService', () => {
     });
   });
 
-  describe('assignToHuman', () => {
-    it('delegates to the provider', async () => {
-      const provider = makeProvider();
-      await makeService(provider).assignToHuman('conv-1');
-      expect(provider.assignToHuman).toHaveBeenCalledWith('conv-1');
-    });
-
-    it('is a no-op when the provider does not support assignToHuman', async () => {
-      const provider = makeProvider();
-      delete (provider as Partial<typeof provider>).assignToHuman;
-      await expect(makeService(provider).assignToHuman('conv-1')).resolves.not.toThrow();
-    });
-  });
-
   describe('parseWebhook', () => {
     it('delegates to the provider', () => {
       const provider = makeProvider();
@@ -194,14 +177,6 @@ describe('WhatsappService', () => {
       await service.sendTemplate('628', 'k', {});
 
       expect(service.wasRecentlySentByBot('tmpl-1')).toBe(true);
-    });
-  });
-
-  describe('validateWebhookSignature', () => {
-    it('delegates to the provider', () => {
-      const provider = makeProvider();
-      provider.validateWebhookSignature.mockReturnValue(false);
-      expect(makeService(provider).validateWebhookSignature(Buffer.from('{}'), {})).toBe(false);
     });
   });
 

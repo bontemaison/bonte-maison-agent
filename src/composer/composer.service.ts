@@ -133,8 +133,7 @@ export class ComposerService {
     const apiKey = config.get<string>('ANTHROPIC_API_KEY');
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY must be set');
     this.client = new Anthropic({ apiKey });
-    this.model =
-      config.get<string>('CLAUDE_RESPONSE_MODEL') ?? 'claude-sonnet-4-6';
+    this.model = config.get<string>('CLAUDE_MODEL') ?? 'claude-sonnet-5';
   }
 
   async compose(pkg: CompositionPackage): Promise<ComposeResult> {

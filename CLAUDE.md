@@ -79,20 +79,21 @@ All outbound messages through `WhatsappService.sendMessage()`. Logs every send, 
 
 Session sends wait a human-like typing delay scaled by reply length (50ms/char, clamped 2–10s — constants in `whatsapp.service.ts`) so replies don't feel instant/robotic. `sendTemplate` (HSM, owner notifications) sends immediately.
 
-### Dualhook (outbound relay)
-Production runs `WHATSAPP_PROVIDER=dualhook`. Dualhook relays outbound Cloud API
-requests — the payload, path and API version are unchanged; only the host and
-the bearer differ. `CloudApiProvider` resolves both at construction:
+### Dualhook (outbound relay) — the only provider
+There is no provider switch. `CloudApiProvider` always posts to
+`api.dualhook.com/{version}/{phoneId}/messages` with `DUALHOOK_LIVE_KEY`
+(`dh_live_...`) as the bearer. Dualhook relays the standard Cloud API request:
+payload, path and API version are unchanged; only the host and the bearer
+differ from Meta's own endpoint. The `dh_live_` key is server-side only — never
+sent to Meta, never in client code.
 
-| provider | host | bearer |
-|---|---|---|
-| `cloud_api` | `graph.facebook.com` | `WHATSAPP_ACCESS_TOKEN` |
-| `dualhook` | `api.dualhook.com` | `DUALHOOK_LIVE_KEY` (`dh_live_...`) |
-
-The `dh_live_` key is server-side only — never sent to Meta, never in client
-code. Inbound webhooks are **not** relayed: they still arrive directly from
-Meta, so signature handling (`WHATSAPP_SKIP_SIGNATURE_CHECK`,
-`WHATSAPP_APP_SECRET`) is unaffected by this setting.
+**Inbound webhooks are not relayed and not authenticated.** They arrive
+directly from Meta, which signs them with Dualhook's (the BSP's) app secret —
+a value we cannot obtain, so HMAC verification is impossible. `POST /webhook`
+therefore accepts any well-formed payload from any caller; there is no guard,
+no secret path segment and no IP allowlist. The GET handshake still checks
+`WHATSAPP_VERIFY_TOKEN` (handled in `WhatsappService.verifyWebhook`, not in the
+provider).
 
 ### Dates & timezones
 Booking dates are **calendar dates, not instants** — "2 May 2027" is a day.
@@ -468,7 +469,7 @@ Owner WhatsApp notifications go through `sendTemplate` (HSM), not
 session sends fail outside the WhatsApp 24-hour customer-service window.
 
 The template name lives in `OWNER_WHATSAPP_TEMPLATE`. The template must be
-pre-approved at the WhatsApp provider (Wati/Meta) and accept a single body
+pre-approved at Meta and accept a single body
 parameter `{{1}}` that carries the full notification text. Example body:
 
 ```
@@ -495,18 +496,18 @@ number are ignored. All commands route through `MessageHandlerService.runOwnerCo
 
 ### Human takeover (WhatsApp coexistence)
 When Jim replies in a customer thread from the business number's WhatsApp app
-(coexistence mode), WATI surfaces it as an `owner=true` webhook. The flow:
+(coexistence mode), Meta mirrors it back as a `smb_message_echoes` webhook. The
+flow:
 
-1. `WatiProvider.parseOutboundEcho` recognises the echo (separate from
-   `parseWebhook` which still returns null for owner events).
+1. `CloudApiProvider.parseOutboundEcho` recognises the echo — the entries live
+   under `value.message_echoes`, not `value.messages`. It is separate from
+   `parseWebhook`, which skips any change whose `field` isn't `messages`.
 2. `WebhookController` looks up the message id in `WhatsappService.wasRecentlySentByBot`.
    - Hit → the bot itself sent this; ignore.
    - Miss → it's Jim replying directly. Call
      `MessageHandlerService.handleOwnerTakeover(echo.to)` to set the
      conversation's `pause_status = human` **with a `pause_until` window**
      (`TAKEOVER_WINDOW_MIN`) and cancel any scheduled follow-ups.
-3. The CloudAPI provider does not implement `parseOutboundEcho` — this flow is
-   WATI-specific.
 
 **Auto-resume.** A takeover is temporary: the bot stands back down only until
 `pause_until` lapses. `ConversationService.resolveStatus` treats an expired
@@ -525,11 +526,9 @@ so it never auto-resumes — that handover stays with Jim until he `/resume`s.
 ```
 # WhatsApp Business API
 WHATSAPP_PHONE_NUMBER_ID=
-WHATSAPP_ACCESS_TOKEN=      # unused when WHATSAPP_PROVIDER=dualhook
-WHATSAPP_VERIFY_TOKEN=
-WHATSAPP_APP_SECRET=
-WHATSAPP_PROVIDER=          # cloud_api | dualhook | wati
-DUALHOOK_LIVE_KEY=          # dh_live_... — required when provider is dualhook
+WHATSAPP_VERIFY_TOKEN=      # GET webhook handshake only
+DUALHOOK_LIVE_KEY=          # dh_live_... — required, the outbound bearer
+WHATSAPP_GRAPH_VERSION=     # optional, defaults to v25.0
 
 # Airtable
 AIRTABLE_API_KEY=
@@ -537,7 +536,7 @@ AIRTABLE_BASE_ID=
 
 # Anthropic
 ANTHROPIC_API_KEY=
-CLAUDE_MODEL=claude-haiku-4-5-20251001
+CLAUDE_MODEL=claude-sonnet-5   # parser and composer share one model
 
 # iCal
 ICAL_URL=https://ical.promotemyplace.com/4ee2e6e0bce533ec4edd08202ce80eb9/calendar.ics
@@ -567,10 +566,6 @@ SUPERCONTROL_WEBHOOK_SECRET=
 # Feature flags
 # instant_book_enabled and year_2026_fully_booked are stored as rows in the
 # Airtable BookingRules table — no env var, toggle in Airtable.
-
-# Response mode
-RESPONSE_MODE=template
-CLAUDE_RESPONSE_MODEL=claude-sonnet-4-6
 
 # App
 PORT=3000

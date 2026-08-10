@@ -13,7 +13,7 @@ jest.mock('@anthropic-ai/sdk', () =>
 const makeConfig = (
   values: Record<string, string | undefined> = {
     ANTHROPIC_API_KEY: 'test-key',
-    CLAUDE_MODEL: 'claude-haiku-4-5-20251001',
+    CLAUDE_MODEL: 'claude-sonnet-5',
   },
 ): ConfigService =>
   ({ get: (key: string) => values[key] }) as unknown as ConfigService;
@@ -102,7 +102,7 @@ describe('ParserService', () => {
 
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-5',
         messages: expect.arrayContaining([
           expect.objectContaining({
             role: 'user',

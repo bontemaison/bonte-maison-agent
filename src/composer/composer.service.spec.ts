@@ -13,7 +13,7 @@ jest.mock('@anthropic-ai/sdk', () =>
 const makeConfig = (
   values: Record<string, string | undefined> = {
     ANTHROPIC_API_KEY: 'test-key',
-    CLAUDE_RESPONSE_MODEL: 'claude-sonnet-4-6',
+    CLAUDE_MODEL: 'claude-sonnet-5',
   },
 ): ConfigService =>
   ({ get: (key: string) => values[key] }) as unknown as ConfigService;

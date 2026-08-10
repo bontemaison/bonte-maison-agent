@@ -6,10 +6,9 @@ const FORBIDDEN_WHEN_REJECTING = ['sold', 'taken', 'unavailable'];
 const HALLUCINATIONS = ['sauna', 'gym', 'air conditioning', ' AC ', 'jacuzzi', 'hot tub'];
 
 /**
- * Tone/voice checks. With RESPONSE_MODE=template these run against the
- * actual Airtable-seeded copy. To extend coverage, swap the seed in
- * fixtures/seed.ts to include realistic Jim copy per template, or
- * run with RESPONSE_MODE=generate to spot-check live Claude output.
+ * Tone/voice checks. These run against the Airtable-seeded template copy,
+ * since the composer is stubbed out in e2e. To extend coverage, swap the seed
+ * in fixtures/seed.ts to include realistic Jim copy per template.
  *
  * The generic seed used here writes "[key] reply" — the assertions below
  * still catch infra regressions and any future seed that introduces bad
