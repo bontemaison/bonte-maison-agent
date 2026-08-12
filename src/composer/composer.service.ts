@@ -161,10 +161,11 @@ export class ComposerService {
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: 768,
+        thinking: { type: 'disabled' },
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userContent }],
       });
-      const block = response.content[0];
+      const block = response.content.find((b) => b.type === 'text');
       raw = block && block.type === 'text' ? block.text.trim() : '';
     } catch (err) {
       this.logger.error('templates', 'composer call failed', {

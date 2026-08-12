@@ -4,9 +4,13 @@ import {
   ForbiddenException,
   Get,
   HttpCode,
+  NotFoundException,
+  Param,
   Post,
   Query,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 import { LoggerService } from '../logger/logger.service';
 import { MessageHandlerService } from '../orchestrator/message-handler.service';
 import { WhatsappService } from './whatsapp.service';
@@ -14,15 +18,33 @@ import { WhatsappService } from './whatsapp.service';
 const DEDUP_TTL_MS = 10 * 60 * 1000;
 const DEDUP_MAX = 1000;
 
-@Controller('webhook')
+// Meta signs inbound webhooks with the BSP's app secret under Dualhook, so
+// HMAC verification is impossible. A secret path segment is the compensating
+// control: it stops scanning, not anyone who has seen the URL.
+@Controller('webhook/:secret')
 export class WebhookController {
   private readonly seen = new Map<string, number>();
+  private readonly pathSecret: string;
 
   constructor(
     private readonly logger: LoggerService,
     private readonly handler: MessageHandlerService,
     private readonly whatsapp: WhatsappService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.pathSecret = config.get<string>('WEBHOOK_PATH_SECRET') ?? '';
+    if (!this.pathSecret) throw new Error('WEBHOOK_PATH_SECRET must be set');
+  }
+
+  // Hashed before comparing so the compare is constant-time over fixed-width
+  // buffers. 404 rather than 403 — a 403 confirms the endpoint is here.
+  private assertSecret(supplied: string): void {
+    const d = (s: string): Buffer => crypto.createHash('sha256').update(s).digest();
+    if (!crypto.timingSafeEqual(d(supplied ?? ''), d(this.pathSecret))) {
+      this.logger.warn('whatsapp', 'webhook path secret mismatch', {});
+      throw new NotFoundException();
+    }
+  }
 
   private isDuplicate(id: string): boolean {
     const now = Date.now();
@@ -41,10 +63,12 @@ export class WebhookController {
 
   @Get()
   verify(
+    @Param('secret') secret: string,
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string,
   ): string {
+    this.assertSecret(secret);
     try {
       return this.whatsapp.verifyWebhook(mode, token, challenge);
     } catch {
@@ -53,13 +77,13 @@ export class WebhookController {
     }
   }
 
-  // NOTE: this endpoint is unauthenticated. Meta signs webhooks with the
-  // BSP-owned app secret under Dualhook's Webhook Override, which we can never
-  // obtain, so HMAC verification is not possible here. Anyone who knows the
-  // URL can post a forged payload.
   @Post()
   @HttpCode(200)
-  async receive(@Body() body: unknown): Promise<{ status: 'ok' }> {
+  async receive(
+    @Param('secret') secret: string,
+    @Body() body: unknown,
+  ): Promise<{ status: 'ok' }> {
+    this.assertSecret(secret);
     this.logger.debug('whatsapp', 'webhook payload received', { body });
 
     const message = this.whatsapp.parseWebhook(body);

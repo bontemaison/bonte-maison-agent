@@ -1,4 +1,5 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger/logger.service';
 import { MessageHandlerService } from '../orchestrator/message-handler.service';
 import { WhatsappService } from './whatsapp.service';
@@ -33,6 +34,19 @@ const makeWhatsapp = (
     wasRecentlySentByBot: overrides.wasRecentlySentByBot ?? (() => false),
   }) as unknown as WhatsappService;
 
+const SECRET = 'path-secret-abc';
+
+// No default arg here: `makeConfig(undefined)` must actually mean "unset",
+// and a default parameter would silently substitute SECRET instead.
+const makeConfig = (secret: string | undefined): ConfigService =>
+  ({ get: () => secret }) as unknown as ConfigService;
+
+const makeCtrl = (
+  logger = makeLogger(),
+  handler = makeHandler(),
+  whatsapp = makeWhatsapp(),
+): WebhookController => new WebhookController(logger, handler, whatsapp, makeConfig(SECRET));
+
 const samplePayload = {
   entry: [
     {
@@ -47,16 +61,59 @@ const samplePayload = {
   ],
 };
 
+describe('WebhookController (path secret)', () => {
+  it('refuses to construct when WEBHOOK_PATH_SECRET is unset', () => {
+    expect(
+      () =>
+        new WebhookController(
+          makeLogger(),
+          makeHandler(),
+          makeWhatsapp(),
+          makeConfig(undefined),
+        ),
+    ).toThrow(/WEBHOOK_PATH_SECRET/);
+  });
+
+  it('404s a POST with the wrong secret, without dispatching', async () => {
+    const handler = makeHandler();
+    const ctrl = makeCtrl(
+      makeLogger(),
+      handler,
+      makeWhatsapp({ parseWebhook: () => ({ from: '628', text: 'hi' }) }),
+    );
+
+    await expect(ctrl.receive('wrong-secret', samplePayload)).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(handler.handle).not.toHaveBeenCalled();
+  });
+
+  // A prefix of the real secret must fail the same way a wrong-length one
+  // does — guards against a compare that short-circuits on length.
+  it('404s a POST with a prefix of the secret', async () => {
+    const ctrl = makeCtrl();
+    await expect(ctrl.receive(SECRET.slice(0, -1), {})).rejects.toThrow(NotFoundException);
+  });
+
+  it('404s the GET handshake with the wrong secret', () => {
+    const whatsapp = makeWhatsapp();
+    const ctrl = makeCtrl(makeLogger(), makeHandler(), whatsapp);
+    expect(() => ctrl.verify('wrong-secret', 'subscribe', 'tok', 'c')).toThrow(
+      NotFoundException,
+    );
+  });
+});
+
 describe('WebhookController (verification)', () => {
   it('returns the challenge when provider accepts', () => {
-    const ctrl = new WebhookController(makeLogger(), makeHandler(), makeWhatsapp());
-    expect(ctrl.verify('subscribe', 'tok', 'challenge-123')).toBe('challenge-123');
+    const ctrl = makeCtrl();
+    expect(ctrl.verify(SECRET, 'subscribe', 'tok', 'challenge-123')).toBe('challenge-123');
   });
 
   it('throws ForbiddenException when provider rejects', () => {
     const whatsapp = makeWhatsapp({ verifyWebhook: () => { throw new Error('bad token'); } });
-    const ctrl = new WebhookController(makeLogger(), makeHandler(), whatsapp);
-    expect(() => ctrl.verify('subscribe', 'wrong', 'c')).toThrow(ForbiddenException);
+    const ctrl = makeCtrl(makeLogger(), makeHandler(), whatsapp);
+    expect(() => ctrl.verify(SECRET, 'subscribe', 'wrong', 'c')).toThrow(ForbiddenException);
   });
 });
 
@@ -67,9 +124,9 @@ describe('WebhookController (incoming POST)', () => {
     const whatsapp = makeWhatsapp({
       parseWebhook: () => ({ from: '628123456789', text: 'hello', id: 'wamid.abc' }),
     });
-    const ctrl = new WebhookController(logger, handler, whatsapp);
+    const ctrl = makeCtrl(logger, handler, whatsapp);
 
-    const out = await ctrl.receive(samplePayload);
+    const out = await ctrl.receive(SECRET, samplePayload);
 
     expect(out).toEqual({ status: 'ok' });
     expect(logger.info).toHaveBeenCalledWith(
@@ -82,9 +139,9 @@ describe('WebhookController (incoming POST)', () => {
 
   it('returns ok and does not dispatch when parseWebhook returns null (status callback)', async () => {
     const handler = makeHandler();
-    const ctrl = new WebhookController(makeLogger(), handler, makeWhatsapp({ parseWebhook: () => null }));
+    const ctrl = makeCtrl(makeLogger(), handler, makeWhatsapp({ parseWebhook: () => null }));
 
-    const out = await ctrl.receive({});
+    const out = await ctrl.receive(SECRET, {});
 
     expect(out).toEqual({ status: 'ok' });
     expect(handler.handle).not.toHaveBeenCalled();
@@ -97,9 +154,9 @@ describe('WebhookController (incoming POST)', () => {
       parseOutboundEcho: () => ({ to: '628777', text: 'hi', id: 'echo-1' }),
       wasRecentlySentByBot: () => false,
     });
-    const ctrl = new WebhookController(makeLogger(), handler, whatsapp);
+    const ctrl = makeCtrl(makeLogger(), handler, whatsapp);
 
-    const out = await ctrl.receive({});
+    const out = await ctrl.receive(SECRET, {});
 
     expect(out).toEqual({ status: 'ok' });
     expect(handler.handleOwnerTakeover).toHaveBeenCalledWith('628777');
@@ -113,9 +170,9 @@ describe('WebhookController (incoming POST)', () => {
       parseOutboundEcho: () => ({ to: '628777', text: 'hi', id: 'echo-1' }),
       wasRecentlySentByBot: (id: string) => id === 'echo-1',
     });
-    const ctrl = new WebhookController(makeLogger(), handler, whatsapp);
+    const ctrl = makeCtrl(makeLogger(), handler, whatsapp);
 
-    await ctrl.receive({});
+    await ctrl.receive(SECRET, {});
 
     expect(handler.handleOwnerTakeover).not.toHaveBeenCalled();
     expect(handler.handle).not.toHaveBeenCalled();
@@ -127,8 +184,8 @@ describe('WebhookController (incoming POST)', () => {
     const whatsapp = makeWhatsapp({
       parseWebhook: () => ({ from: '628', text: 'hi' }),
     });
-    const ctrl = new WebhookController(makeLogger(), handler, whatsapp);
+    const ctrl = makeCtrl(makeLogger(), handler, whatsapp);
 
-    await expect(ctrl.receive({})).resolves.toEqual({ status: 'ok' });
+    await expect(ctrl.receive(SECRET, {})).resolves.toEqual({ status: 'ok' });
   });
 });

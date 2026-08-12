@@ -171,6 +171,24 @@ describe('ComposerService', () => {
     }
   });
 
+  it('skips a leading thinking block and uses the text block that follows', async () => {
+    mockCreate.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        claudeText('Sunday to Sunday works well, and September has open weeks.')
+          .content[0],
+      ],
+    });
+    const svc = new ComposerService(makeLogger(), makeConfig());
+
+    const result = await svc.compose(basePkg());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.text).toContain('Sunday to Sunday');
+    }
+  });
+
   it('rejects meta-remarks about repeated messages', async () => {
     mockCreate.mockResolvedValue(
       claudeText(

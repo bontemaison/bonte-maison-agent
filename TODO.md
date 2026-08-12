@@ -70,8 +70,9 @@ Build in this order — each phase should be fully working and tested before mov
   - Prompt caching on system prompt
 - [x] **WhatsApp webhook** (`src/whatsapp/`)
   - GET verification endpoint (`WHATSAPP_VERIFY_TOKEN`)
-  - POST message handler — unauthenticated by design; Meta signs with
-    Dualhook's app secret, which we cannot obtain
+  - POST message handler, gated by a secret URL path segment
+    (`WEBHOOK_PATH_SECRET`) — HMAC is impossible under Dualhook's Webhook
+    Override, since Meta signs with the BSP's app secret
   - Always return 200 (retry protection)
 - [x] **WhatsApp sender** (`src/whatsapp/`)
   - `sendMessage(to, text)` via WhatsApp Business API
@@ -234,7 +235,7 @@ Build in this order — each phase should be fully working and tested before mov
 - Test Claude parsing edge cases: "early August", "next week", "around Christmas", relative dates
 - Test iCal edge cases: overlapping events, all-day vs timed, empty feed, feed HTTP error
 - WhatsApp 24-hour messaging window — check if nudges on older conversations violate the policy
-- `POST /webhook` is open to anyone who learns the URL — HMAC verification is impossible under Dualhook's Webhook Override. If this becomes a concern, add a secret URL path segment and/or an IP allowlist for Meta's webhook ranges
+- Webhook is gated by a secret URL path (`WEBHOOK_PATH_SECRET`) since HMAC is impossible under Dualhook's Webhook Override. That stops scanning but not anyone who has seen the URL — if stronger assurance is ever needed, add an IP allowlist for Meta's webhook ranges
 - Seed script (`npm run seed:templates`) must be run against the live Airtable base before first deployment
 - Follow-ups must cancel when customer replies (check across all intent types, not just booking)
 - `booking_confirmed_handoff` → swap to instant book variant when Jim flips the switch

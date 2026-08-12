@@ -151,10 +151,11 @@ export class ParserService {
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: 768,
+        thinking: { type: 'disabled' },
         system,
         messages: [{ role: 'user', content: userContent }],
       });
-      const block = response.content[0];
+      const block = response.content.find((b) => b.type === 'text');
       raw = block && block.type === 'text' ? block.text : '';
     } catch (err) {
       this.logger.error('parser', 'Claude API call failed', {

@@ -87,13 +87,24 @@ payload, path and API version are unchanged; only the host and the bearer
 differ from Meta's own endpoint. The `dh_live_` key is server-side only — never
 sent to Meta, never in client code.
 
-**Inbound webhooks are not relayed and not authenticated.** They arrive
-directly from Meta, which signs them with Dualhook's (the BSP's) app secret —
-a value we cannot obtain, so HMAC verification is impossible. `POST /webhook`
-therefore accepts any well-formed payload from any caller; there is no guard,
-no secret path segment and no IP allowlist. The GET handshake still checks
-`WHATSAPP_VERIFY_TOKEN` (handled in `WhatsappService.verifyWebhook`, not in the
-provider).
+**Inbound webhooks are not relayed, and are gated by a secret URL path.** They
+arrive directly from Meta, which signs them with Dualhook's (the BSP's) app
+secret — a value we cannot obtain, so HMAC verification is impossible. The
+compensating control is a secret path segment: the route is
+`/webhook/:secret`, checked against `WEBHOOK_PATH_SECRET` in constant time on
+both GET and POST. A mismatch returns **404**, not 403, so a prober can't
+confirm the endpoint is there. `WebhookController` throws at construction if
+the var is unset, so the app cannot boot with an open webhook.
+
+Know the limit of this: it authenticates *knowledge of the URL*, not the
+sender, and unlike a per-request signature it is a long-lived bearer value
+carried in the path — so it leaks wherever URLs leak (platform access logs,
+the Dualhook and Meta dashboards, shell history). It stops untargeted
+scanning; it does not stop anyone who has seen the URL. Rotate on suspicion by
+changing the var and updating the callback URL in the Dualhook dashboard.
+
+The GET handshake additionally checks `WHATSAPP_VERIFY_TOKEN` (handled in
+`WhatsappService.verifyWebhook`, not in the provider).
 
 ### Dates & timezones
 Booking dates are **calendar dates, not instants** — "2 May 2027" is a day.
@@ -422,6 +433,16 @@ allowed set. The gate applies to `listTopics` as well as `render`: if a
 prospect's parser never learns `wifi_password` exists, it can never ask for it,
 so the answer can never be fetched by mistake.
 
+**Airtable is the runtime source of truth, not `scripts/seed-knowledge-base.ts`.**
+`KnowledgeBaseService` queries Airtable live on every message, so an edit Jim
+makes directly in Airtable is authoritative immediately — nothing to sync.
+`npm run seed:kb` only creates missing topics and backfills a blank `audience`
+column; it never overwrites `answer`/`question_examples` on a row that already
+exists, so it can never clobber a manual edit. `KB_ENTRIES` in that script is
+an initial seed / version-controlled template, not a live copy. Use
+`npm run seed:kb -- --force` only when you deliberately want to push a
+code-side content revision over whatever is in Airtable.
+
 ### `MessageLog`
 - `phone`
 - `direction` (`in | out`)
@@ -528,6 +549,7 @@ so it never auto-resumes — that handover stays with Jim until he `/resume`s.
 WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_VERIFY_TOKEN=      # GET webhook handshake only
 DUALHOOK_LIVE_KEY=          # dh_live_... — required, the outbound bearer
+WEBHOOK_PATH_SECRET=        # required — secret segment in /webhook/<secret>
 WHATSAPP_GRAPH_VERSION=     # optional, defaults to v25.0
 
 # Airtable

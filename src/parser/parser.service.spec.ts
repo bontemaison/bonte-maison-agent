@@ -181,6 +181,22 @@ describe('ParserService', () => {
     );
   });
 
+  it('skips a leading thinking block and parses the text block that follows', async () => {
+    mockCreate.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        claudeResponse(fullJson({ intent: 'greeting', confidence: 0.9 }))
+          .content[0],
+      ],
+    });
+    const service = new ParserService(makeConfig(), makeLogger());
+
+    const out = await service.parse('hi');
+
+    expect(out.intent).toBe('greeting');
+    expect(out.confidence).toBe(0.9);
+  });
+
   it('logs and rethrows when the Claude API call fails', async () => {
     mockCreate.mockRejectedValue(new Error('429 rate limited'));
     const logger = makeLogger();

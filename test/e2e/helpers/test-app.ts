@@ -80,6 +80,7 @@ export async function buildHarness(
   process.env.LOG_LEVEL = 'error';
   process.env.WHATSAPP_PHONE_NUMBER_ID = 'test';
   process.env.WHATSAPP_VERIFY_TOKEN = 'test';
+  process.env.WEBHOOK_PATH_SECRET = 'test-path-secret';
 
   const airtable = new FakeAirtable();
   const parser = new FakeParser();
