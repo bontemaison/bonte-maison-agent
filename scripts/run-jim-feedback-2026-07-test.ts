@@ -32,7 +32,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module';
 import { AvailabilityService } from '../src/availability/availability.service';
-import { BookingRulesService } from '../src/booking-rules/booking-rules.service';
 import { ComposerService } from '../src/composer/composer.service';
 import { MessageHandlerService } from '../src/orchestrator/message-handler.service';
 import { ParserService, ParseResult } from '../src/parser/parser.service';
@@ -70,7 +69,6 @@ type Week = { checkIn: Date; checkOut: Date };
 type GroundTruth = {
   /** Available Sunday weeks with check-in in Sept or Oct 2026. */
   septOct2026: Week[];
-  year2026Blocked: boolean;
   /** Sun 18 Apr 2027 → Sun 25 Apr 2027 free? (the week containing Apr 23) */
   april18Free: boolean;
   /** Sun 25 Apr 2027 → Sun 2 May 2027 free? (the other "flexible" fit) */
@@ -361,7 +359,6 @@ async function main(): Promise<void> {
 
   // ── Ground truth from the live iCal ────────────────────────────────────
   const availability = app.get(AvailabilityService);
-  const bookingRules = app.get(BookingRulesService);
 
   const septOct2026 = await availability.findAvailableSundayWeeks(
     new Date(Date.UTC(2026, 8, 1)),
@@ -373,13 +370,11 @@ async function main(): Promise<void> {
   );
   const truth: GroundTruth = {
     septOct2026,
-    year2026Blocked: await bookingRules.isYearFullyBooked(2026),
     april18Free: aprilMay2027.some((w) => iso(w.checkIn) === '2027-04-18'),
     april25Free: aprilMay2027.some((w) => iso(w.checkIn) === '2027-04-25'),
   };
 
   console.log(`${COLOR.bold}iCal ground truth${COLOR.reset}`);
-  console.log(`  year_2026_fully_booked flag: ${truth.year2026Blocked}`);
   console.log(
     `  Free Sunday weeks Sept–Oct 2026: ${septOct2026.length ? '' : '(none)'}`,
   );

@@ -1,0 +1,400 @@
+Received: from CWXP123MB4213.GBRP123.PROD.OUTLOOK.COM (2603:10a6:400:b2::14)
+ by LO2P123MB5310.GBRP123.PROD.OUTLOOK.COM with HTTPS; Mon, 3 Aug 2026
+ 18:41:43 +0000
+Received: from LO4P265CA0094.GBRP265.PROD.OUTLOOK.COM (2603:10a6:600:2bc::9)
+ by CWXP123MB4213.GBRP123.PROD.OUTLOOK.COM (2603:10a6:400:b2::14) with
+ Microsoft SMTP Server (version=TLS1_2,
+ cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id 15.21.270.18; Mon, 3 Aug
+ 2026 18:41:41 +0000
+Received: from LO1PEPF000022FD.GBRP265.PROD.OUTLOOK.COM
+ (2603:10a6:600:2bc:cafe::98) by LO4P265CA0094.outlook.office365.com
+ (2603:10a6:600:2bc::9) with Microsoft SMTP Server (version=TLS1_3,
+ cipher=TLS_AES_256_GCM_SHA384) id 15.21.270.18 via Frontend Transport; Mon, 3
+ Aug 2026 18:41:41 +0000
+Authentication-Results: spf=pass (sender IP is 198.2.136.112)
+ smtp.mailfrom=mandrillapp.com; dkim=pass (signature was verified)
+ header.d=mandrillapp.com;dkim=pass (signature was verified)
+ header.d=secure-booking-email.net;dmarc=pass action=none
+ header.from=secure-booking-email.net;compauth=pass reason=100
+Received-SPF: Pass (protection.outlook.com: domain of mandrillapp.com
+ designates 198.2.136.112 as permitted sender)
+ receiver=protection.outlook.com; client-ip=198.2.136.112;
+ helo=mandrill4.secure-booking-email.net; pr=C
+Received: from mandrill4.secure-booking-email.net (198.2.136.112) by
+ LO1PEPF000022FD.mail.protection.outlook.com (10.167.240.21) with Microsoft
+ SMTP Server (version=TLS1_3, cipher=TLS_AES_256_GCM_SHA384) id 15.21.292.8
+ via Frontend Transport; Mon, 3 Aug 2026 18:41:41 +0000
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=mandrillapp.com;
+	s=mte1; t=1785782499; x=1786052499;
+	bh=JnLAPqYW8HaKuyMymYSbrOkXo7IwmVOFmuWO9K9ud4k=;
+	h=From:Subject:To:Reply-To:Message-Id:Feedback-ID:Date:MIME-Version:
+	 Content-Type:CC:Date:Subject:From;
+	b=PykPB9rLu0+zhJUmlIEzH6iv4rIsOuo2uCg9JBr7XN4M6f36VYGwdNMasikDWW0S1
+	 PIQwUK79xOi9AH//m7BsK3Q5ub6plc5OpDynmgLRIXQyRqF7BtN8Bd1UIqW+52oi8o
+	 1TSm27D0RjwoRM3Ioa3/hXO0hz12IuRdJMoDtA99XvVHwc6BlrzCAdWgFKXnYCGsaT
+	 SPTmY4NuMfd07wXKUXO/xv7mO2iMLaAI6Pp6a07Z89tkccfRkHmwiaNsSXCf6LcrwJ
+	 JiURKKYiLmYzkZeg2IXcRN8LSHABtni0n3azA4R+3cfQrClRhFRBbpwX0yihcSjiU0
+	 aoKSEyCPrJdcQ==
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+	d=secure-booking-email.net; s=mte1; t=1785782499; x=1786042999;
+	i=bookings=3Dbontemaison.com@secure-booking-email.net;
+	bh=JnLAPqYW8HaKuyMymYSbrOkXo7IwmVOFmuWO9K9ud4k=;
+	h=From:Subject:To:Reply-To:Message-Id:Feedback-ID:Date:MIME-Version:
+	 Content-Type:CC:Date:Subject:From;
+	b=yVTo7LdReLzsUABtj7OF0jUa2z7c42oNOKpYJE9Ba3JTjndxZep6SexXncDKk/kA+
+	 MX+WVwTxeoe49fxmXc4fHCRSwKdV4GYhQ/0HpDXwAW8wdCjsGSL8P1QgMXuEAlxSo0
+	 dFocoJswPxRIeLmzQ+r0FAzXOnnZbA4Z/O1bZ/dBjAG2qfaOkj2G3+Z0n/6KmK1ray
+	 Zz0CGR64XcS2/i7Nt7S/JnU5tJ12vviCLTzM1ERd6/rr0tPCfyrtiHcgGVN2Vx9+P+
+	 MtUCDhXKW98bnK4tUVscLUIFQk8hJuEGktQShaBCAzP707HoKvq9WRMYha2TOjjFED
+	 J56bY9nwu4FXA==
+Received: from mta001-md-usw2.delv.a.intuit.com (localhost [127.0.0.1])
+	by mandrill4.secure-booking-email.net (Mailchimp) with ESMTP id 4hDQW75fWzz6CQ94M
+	for <bookings@bontemaison.com>; Mon,  3 Aug 2026 18:41:39 +0000 (UTC)
+From: "Bonte  holiday home in France" <bookings=bontemaison.com@secure-booking-email.net>
+Subject: =?utf-8?Q?Deposit=20paid=20for=20your=20holiday=20at=20Bonte?=
+Received: from [92.63.143.68] by mandrillapp.com id b1ff777ecce54c58a2cc7135c4bea11e; Mon, 03 Aug 2026 18:41:39 +0000
+To: Lcmaheady@outlook.com, bookings@bontemaison.com
+Reply-To: bookings@bontemaison.com
+Message-Id: <20260803-19412863-28f8-0@cpviis17.sc.local>
+X-Native-Encoded: 1
+X-Report-Abuse: =?UTF-8?Q?Please=20forward=20a=20copy=20of=20this=20message,=20including=20all=20headers,=20to=20abuse@mandrill.com.=20You=20can=20also=20report=20abuse=20here:=20https://mandrillapp.com/contact/abuse=3Fid=3D31067093.b1ff777ecce54c58a2cc7135c4bea11e?=
+X-Mandrill-User: md_31067093
+Feedback-ID: 31067093:31067093.20260803:md
+Date: Mon, 03 Aug 2026 18:41:39 +0000
+Content-Type: multipart/alternative; boundary="_av-pZgVtgLaBDBL8YUoCkspUw"
+Return-Path: bounce-md_31067093.6a70e0e3.v1-b1ff777ecce54c58a2cc7135c4bea11e@mandrillapp.com
+X-MS-Exchange-Organization-ExpirationStartTime: 03 Aug 2026 18:41:41.6580
+ (UTC)
+X-MS-Exchange-Organization-ExpirationStartTimeReason: OriginalSubmit
+X-MS-Exchange-Organization-ExpirationInterval: 1:00:00:00.0000000
+X-MS-Exchange-Organization-ExpirationIntervalReason: OriginalSubmit
+X-MS-Exchange-Organization-Network-Message-Id: 59e61ec9-1a52-423f-890f-08def18edc48
+X-EOPAttributedMessage: 0
+X-EOPTenantAttributedMessage: 73062c4f-6a52-4f79-b498-098c2b8c9a02:0
+X-MS-Exchange-Organization-MessageDirectionality: Incoming
+X-MS-PublicTrafficType: Email
+X-MS-TrafficTypeDiagnostic: LO1PEPF000022FD:EE_|CWXP123MB4213:EE_|LO2P123MB5310:EE_
+X-MS-Exchange-Organization-AuthSource: LO1PEPF000022FD.GBRP265.PROD.OUTLOOK.COM
+X-MS-Exchange-Organization-AuthAs: Anonymous
+X-MS-Office365-Filtering-Correlation-Id: 59e61ec9-1a52-423f-890f-08def18edc48
+X-MS-Exchange-Organization-SCL: 1
+X-Microsoft-Antispam: BCL:0;ARA:13230040|704162311799003|704160411799003|7149299003|69100299015|13003099007|5063699009|18003699003|19002099009|4113699003|10067099003|8096899003|4076899003|16102099003|57112099003;
+X-Forefront-Antispam-Report: CIP:198.2.136.112;CTRY:US;LANG:en;SCL:1;SRV:;IPV:NLI;SFV:NSPM;H:mandrill4.secure-booking-email.net;PTR:mandrill4.secure-booking-email.net;CAT:NONE;SFS:(13230040)(704162311799003)(704160411799003)(7149299003)(69100299015)(13003099007)(5063699009)(18003699003)(19002099009)(4113699003)(10067099003)(8096899003)(4076899003)(16102099003)(57112099003);DIR:INB;
+X-MS-Exchange-CrossTenant-OriginalArrivalTime: 03 Aug 2026 18:41:41.1649
+ (UTC)
+X-MS-Exchange-CrossTenant-Network-Message-Id: 59e61ec9-1a52-423f-890f-08def18edc48
+X-MS-Exchange-CrossTenant-Id: 73062c4f-6a52-4f79-b498-098c2b8c9a02
+X-MS-Exchange-CrossTenant-AuthSource: LO1PEPF000022FD.GBRP265.PROD.OUTLOOK.COM
+X-MS-Exchange-CrossTenant-AuthAs: Anonymous
+X-MS-Exchange-CrossTenant-FromEntityHeader: Internet
+X-MS-Exchange-Transport-CrossTenantHeadersStamped: CWXP123MB4213
+X-MS-Exchange-Transport-EndToEndLatency: 00:00:02.7334117
+X-MS-Exchange-Processed-By-BccFoldering: 15.21.0270.016
+X-Microsoft-Antispam-Mailbox-Delivery:
+	ucf:0;jmr:0;auth:0;dest:I;ENG:(910005)(944506478)(944626604)(920097)(930201)(20251009189)(140003);
+X-Microsoft-Antispam-Message-Info:
+	=?utf-8?B?eTExRTQyVjAxT3Noem00K0JPVG9iVmFVa0srRTlVTzRCUWxHcGl1azdFbEhq?=
+ =?utf-8?B?MmRUV092YlFwQjhCemNLMjB1VWZVSUFtRVVKZGNha3paSjZvemVaWSs1enY4?=
+ =?utf-8?B?dy92VWlrcFFDN2dvTVNjNm8rTndVQ0ZjRW9FWEo3dHNkcUZnenNyUWY2dTFW?=
+ =?utf-8?B?cW8wRXpmalBKRDB1UjlKeEVUUXhRV09UellLZlJwZ1RjMVZ1TUgwcnB5M05i?=
+ =?utf-8?B?N2d2RldPUTZkTXltYVJWa0JpSzhVUlM3V2VPRTBhNDhvSlBCcFU3WHR2bHIy?=
+ =?utf-8?B?SjUwN3lwVEF3WnVZL1phUkcvaVJhMEVTZXhMMTJvQThKZzZLVWNyWmR4em8r?=
+ =?utf-8?B?Szl3VTlzVEQyUExRQko5RVRua2UyZnk1Mk9ubnRZV1ZUYnNYNmhmdkRBQ3Ay?=
+ =?utf-8?B?dFFOS0cxeEFRS3EraVJaeHFBTHp4Ym5yMFhKS2Z6MGZVSGVjaS93Qm0veDJx?=
+ =?utf-8?B?MHV4a0dHNnhZdmN5ZjF4djdORVAxVmUyRTJKbFMwRkxvRThNaFh1TFBQc1Nx?=
+ =?utf-8?B?VWk4aTFaaG1wOTR1KzVmK1g2bEhJbGpJZlI5RjNnUHRWK2srQ21ZVGwzMDBP?=
+ =?utf-8?B?M3B3aUIycnZERDV3M0doVVVqYUdpZ1JIbGRRQWJtb09sSU9IbHF4TjV5U21G?=
+ =?utf-8?B?czFuYnFTaVdXdFlYMWFSb2cvVnV6TzJXa2ZKUEsyc01uQ0RKeWhVNGdjblVQ?=
+ =?utf-8?B?bFkyeUl1NGIxVkFuVllnSlhJRkUreDFyY1FlTFRZQ09OZGk2YkdReTBzQ0dx?=
+ =?utf-8?B?K05DdHQ1bTVyaWFVdnZmcFpaaWlVcFdJMVV6eGhUWlZlczB6eU9KYzB5ZlNO?=
+ =?utf-8?B?ZU93OXpmVkM4UzRqeTd1bHNkd3hleGJnNWZyRXdadUNCNnUxb0dGT0h6b1Bz?=
+ =?utf-8?B?YjJ5a2pnbXFVcHByN2NEelNjVm81MEMxeVc3dktMdEZuc3VPUmlTWGhwVURQ?=
+ =?utf-8?B?SzRSOHN5VldZSGZYWUJUclhHN0VaQTF3R1NDMkgva1VONlhYenFQSVdsRFR4?=
+ =?utf-8?B?VDIvUldoVHZmak13S1RDMmRSOG9xSXpMdFJsVE04YUxncTBHUy9qeGlGOW1V?=
+ =?utf-8?B?L1FSRGxEcjdJNnFCY1FkM1hhS0I1b0sxZHh0Y0pCamRtTVRvYTgyeTVkbFNI?=
+ =?utf-8?B?Q2JrUytFaDNrcTlITWN6d05CWFRyZ2ZjWU5XcDJOaUlHWmd4S3BGTk5sSVk4?=
+ =?utf-8?B?elJrb3dmeTl3Z2lYcUJuZDlaS09LeDJYQ3pReStYOWxXRmI5eWppVnJzZkhY?=
+ =?utf-8?B?dGZZbWg1M0tJNHE2dWk4UXZoa2k0Zlp3U3BjRTRuVjBoRmdqYk5zM1p2d3dw?=
+ =?utf-8?B?aFUweE44RzVzMWxqMDJTRjE4d2g1WHo0aVFBTWpmQkI3UUZyZG93ajBWcnlZ?=
+ =?utf-8?B?bk1waTd3VVJRMlBzVHptcG5CdWxaYkcxTEZxUXNkVS9LOXZSaG8wWmNDQWdC?=
+ =?utf-8?B?Vk1ENTcxUEg1c3JKanlyeWxxLzRKQkFiRHVsdWtoRXExazNrZlZkdnFmc25J?=
+ =?utf-8?B?emgwd0hRVkIwUXF5OG5iYUtqOFNWSytRbFBXUWZsZVNVWFF0RlZxblJRSWJF?=
+ =?utf-8?B?STNvakRVbnkzY1VLVUoyOGNyZHEyazZrTDhhMFY0ZWN2Qy9JY0Y2cU5RTG9u?=
+ =?utf-8?B?UW5JT1V6Vlh0ZFMvdXBScHIzOHU2YTA4MWJLdW1heFNxQkNOR2laTUVnSW1Y?=
+ =?utf-8?B?eDEybGpLUWg1ZjU5Z0hPKzFTM3pnakFCRVlyYXVzaE9sQ01CbVFQSTRoK0xF?=
+ =?utf-8?B?L1AvUjNPY2NYaStLTE5qTVNzU2xoUHJRTDVSK3o1bktGbm9jdHZYV1dSR3Bi?=
+ =?utf-8?B?TXNqSXJzTjQ3Q2lBdW1nN29XUnFONjNYMnErNG1sY25EbFQyczN0VXVIQVNE?=
+ =?utf-8?B?OVdJekROM0p1N3NqWmp2cDhPeE9JclZwZ0I1YjFnRHhQR3FIbkhSUEVIaDRl?=
+ =?utf-8?B?anpuT0szVUplYWVTbE42dFJldzUvKyt3WnhTMGc0eDJRS0o3ekxqYTZYSVJI?=
+ =?utf-8?B?S1dKUlIzWndLN29yUGd6cFo2bk5SMlF5M3A0SXRrTWNLYXRBSS8yejUydk1t?=
+ =?utf-8?B?ZnQraHR4QlNMNVRtZmVPR1dIQzd0SC9lSzFueUNXcDBWUEJ6dkh4Q2lxZEcw?=
+ =?utf-8?B?d1lyQytLSTh2MHVBWmMvS08rdjV6b2pMZ0dRUWk2eFB1bTgxeUpkS05hKzhq?=
+ =?utf-8?B?WkhZMHhGZGNYZ0Z2NzZ2SmhJWEsvMXovR3FQSHVMeEN1bDExTXVITktRQ1Vv?=
+ =?utf-8?B?UE1mQnB4VUhHZndQV0tLQjNUODlxZG82bi9rS1pOaTQ2bHpCUTdPTjZCYkU5?=
+ =?utf-8?B?UnJRbEN1VWRHM0VLbG9sajFUYUY5bjdwVXFndm02Qmp6S3hwQTVUQnNoMUFi?=
+ =?utf-8?B?eXcvV04yQnZjMUZPalQzRTJWNFpVWHpQTGMzaUcxRUdSMDcraHNvU1Q0RzhG?=
+ =?utf-8?B?YmlYdGpoOFJFOExJcWZVSTBBNHoraS9tU1EyZnJzaFU1TXZycGRWSmkxWnZP?=
+ =?utf-8?B?c1ptZHRlMTR3OHBVVGV0Q1BqRkFMSXZRY0hCVGVob0lrSUlRRHlDcVdkSmU1?=
+ =?utf-8?B?OUIyWm4rb21wWC8rTUZZMW9xazhTWjhmWVZ2YlhpdkdCM0FhMFBMczZZdnZV?=
+ =?utf-8?B?UENEYU0rTGo4MlVPZ0pTMjBHUGh4WmlnM05LVEZPQ2R5Z2d3T3pKQjZHK3VX?=
+ =?utf-8?B?WUcrc3NNaFhNc0g2Q2h6a0pnL0ozekdHYUMxd2VoNEVhMHBCbUcrNHdlRzF3?=
+ =?utf-8?B?VGFzUmtiTUk3bFlmWEtNdlFQUlhnTUd4WFlqR05BQVY3ZHY3ZmZqWWJhU2VD?=
+ =?utf-8?B?S0FzTHlBUG0xNUNvVlVBdXU2Mm0wdmZiUS9DOTAxRGFqWEx5MVJnYnhIUS9t?=
+ =?utf-8?B?RlpoYWg3UmxuKzBBOENnMEhyNGcvM1pxaE14Wkh3ekUxWUdGTVhXMGM5eFRk?=
+ =?utf-8?B?OS8rY0o0RGJKTzg3bnI1Z1U2SmVLUHlGYkVqNE1LZDRyOEZTeXdyQURqNnJJ?=
+ =?utf-8?B?R0w4WHdtTnV6bnBUZ2txQlBmL1o5Z0dXbithNlgrbFJOYnBvVU93T3FBemxZ?=
+ =?utf-8?B?Y2tRclAwbEl6WFFRPT0=?=
+MIME-Version: 1.0
+
+--_av-pZgVtgLaBDBL8YUoCkspUw
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+ 
+ *Ms Laura Maheady*
+    4 laburnum road
+     Farnham
+     GU99DU
+   United Kingdom
+ 
+
+   
+ Tel: +447901857452       
+Email: Lcmaheady@outlook.com    
+
+  *Booking number: 34* 
+ *Booking date: Mon 03 Aug 2026*
+  Document date: Mon 03 Aug 2026  
+
+     
+ 
+ 
+ Dear  Laura Maheady 
+ 
+ Thank you, I=E2=80=99m really pleased to confirm your deposit has been rec=
+eived
+for your stay at Bont=C3=A9 arriving on Sunday the 16th May 2027 for 7 nigh=
+ts. 
+ 
+ You have a wonderful holiday to look forward to!  Bont=C3=A9 is located in=
+ a
+very special part of the world and I want your time there to feel
+effortless, relaxed and genuinely memorable.
+ 
+ Most guests arrive with plans but quickly settle into a relaxed rhythm;
+slow mornings with coffee on the terrace, time by the pool, exploring local
+markets and vineyards.  Evenings tend to end the same way, outside with a
+drink watching the sun set over the vineyards.
+ 
+ Once the final payment has been made, due 8 weeks before your stay, your
+booking will be fully confirmed.
+ 
+ I will then share the house check-in details and in the weeks prior to
+your stay, I will send some ideas to help shape your stay - everything you
+need for a smooth and relaxing holiday. 
+ 
+ If you need a hire car from Bordeaux airport, have a look at prices on our
+availability page here:  Availability - Bonte
+<https://www.bontemaison.com/availability>
+ 
+ In the meantime, here are some helpful links to get started with ideas:-
+ 
+ www.bontemaison.com/local-area <http://www.bontemaison.com/local-area>
+ 
+ www.bontemaison.com/eating-out <http://www.bontemaison.com/eating-out>
+ 
+ Please give me a call if you'd like to chat anything over.
+ 
+ Many thanks 
+ 
+ Jim Cartwright
+ 
+ +44 (0)7435 301 371
+ 
+       *Bonte*          Arrival date:  Sun 16 May 2027 from 16:00  
+Departure date:  Sun 23 May 2027 (7 nights) by 10:00   Guests: Adults: 8
+Children: 0 Infants: 0   Property total:  *GBP*2,495.00*         *Payment
+summary*   Deposit: Paid GBP623.75   Balance:   GBP 1,871.25 due Sun 14 Mar
+2027 [Pay using Card
+<https://secure.supercontrol.co.uk/payments/25259-162864765-50573> ]
+GBP1,871.25   Grand total:     *GBP*2,495.00*   Paid: 03 Aug 2026 Deposit
+Payment Mastercard 4462-xxxx-xxxx-3428 GBP623.75   Total outstanding:  [Pay
+using Card
+<https://secure.supercontrol.co.uk/payments/25259-162864765-50573> ] 
+*GBP*1,871.25*       *Security deposits*  Type Amount   Pre-auth card
+(awaiting pre-authorisation) GBP200.00
+
+--_av-pZgVtgLaBDBL8YUoCkspUw
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"><div id="sc_body"><table class="sc-summary sc-summary-live" width="95%" border="0" align="center" cellpadding="0" style="font: 10pt arial, sans-serif;">
+<tr><td><br></td></tr><tr class="sc-summary-row-customer-details">
+<td width="50%"><strong class="sc-summary-customer-name">Ms Laura Maheady</strong><br>
+<span class="sc-summary-customer-company">
+</span>
+<span class="sc-summary-customer-address">
+4 laburnum road<br>
+</span>
+<span class="sc-summary-customer-address">
+</span>
+<span class="sc-summary-customer-town">
+Farnham<br>
+</span>
+<span class="sc-summary-customer-county">
+</span>
+<span class="sc-summary-customer-postcode">
+GU99DU<br>
+</span>
+<span class="sc-summary-customer-country">
+United Kingdom<br>
+<br><br>
+</span>
+<span class="sc-summary-customer-phone">
+<br> Tel: +447901857452
+</span>
+<span class="sc-summary-customer-phone">
+</span>
+<span class="sc-summary-customer-phone">
+</span>
+<span class="sc-summary-customer-email">
+<br>Email: Lcmaheady@outlook.com
+</span>
+<span class="sc-summary-guest-name">
+</span>
+<br><br>
+</td>
+<td align="right" valign="bottom" width="50%"><strong style="font-size: 14pt;	line-height: 150%;" class="sc-summary-booking-number">Booking number: 34</strong> <br>
+<strong class="sc-sumamry-booking-date">Booking date: Mon 03 Aug 2026</strong><br>
+<span class="sc-summary-invoice-date">
+Document date: Mon 03 Aug 2026
+</span>
+<br><br>
+</td>
+</tr>
+<tr class="sc-summary-row-owner-text">
+<td colspan="2"><style type="text/css"> #sc_body{ font-family: arial, sans-serif ; font-size: 10pt;} </style>
+
+<div style="text-align: center;"></div>
+
+<br>
+<br>
+Dear &nbsp;Laura Maheady&nbsp;<br>
+<br>
+Thank you, I’m really pleased to confirm your deposit has been received for your stay at Bonté arriving on&nbsp;Sunday the&nbsp;16th May 2027 for&nbsp;7 nights.&nbsp;<br>
+<br>
+You have a wonderful holiday to look forward to!&nbsp; Bonté is located in a&nbsp;very special part of the world and I want your time there to feel effortless, relaxed and genuinely memorable.<br>
+<br>
+Most guests arrive with plans but quickly settle into a relaxed rhythm; slow mornings with coffee on the terrace, time by the pool, exploring local markets and vineyards.&nbsp; Evenings tend to end the same way, outside with a drink watching the sun set over the vineyards.<br>
+<br>
+Once the final payment has been made, due 8 weeks before your stay, your booking will be fully confirmed.<br>
+<br>
+I will then share the house check-in details and in the weeks prior to your stay, I will send some ideas to help shape your stay - everything you need for a smooth and relaxing holiday.&nbsp;<br>
+<br>
+If you need a hire car from Bordeaux airport, have a look at prices on our availability page here:&nbsp;&nbsp;<a href="https://mandrillapp.com/track/click/31067093/www.bontemaison.com?p=eyJzIjoidUQ3WUd3enE4MGIzSnNNY1hlSm9CYUdTVVN3IiwidiI6MiwicCI6IntcInVcIjozMTA2NzA5MyxcInZcIjoyLFwidXJsXCI6XCJodHRwczpcXFwvXFxcL3d3dy5ib250ZW1haXNvbi5jb21cXFwvYXZhaWxhYmlsaXR5XCIsXCJpZFwiOlwiYjFmZjc3N2VjY2U1NGM1OGEyY2M3MTM1YzRiZWExMWVcIixcInVybF9pZHNcIjpbXCIyYTViZmYzMjE5NGRkYjEwMmI3ZjA5MWM1YTIzZDFhMDYwZTJkOGRjXCJdLFwibXNnX3RzXCI6MTc4NTc4MjQ5OX0ifQ">Availability - Bonte</a><br>
+<br>
+In the meantime, here are some helpful links to get started with ideas:-<br>
+<br>
+<a href="https://mandrillapp.com/track/click/31067093/www.bontemaison.com?p=eyJzIjoiR0JSTkZDZGJJdGRLX2h2d0c1Z0E5OE1ienpJIiwidiI6MiwicCI6IntcInVcIjozMTA2NzA5MyxcInZcIjoyLFwidXJsXCI6XCJodHRwOlxcXC9cXFwvd3d3LmJvbnRlbWFpc29uLmNvbVxcXC9sb2NhbC1hcmVhXCIsXCJpZFwiOlwiYjFmZjc3N2VjY2U1NGM1OGEyY2M3MTM1YzRiZWExMWVcIixcInVybF9pZHNcIjpbXCJkYjAxNmMxZDVjYjA2MmQ3YjBhNGE0NjMxNzZhMDMzMGZmMWU0M2FjXCJdLFwibXNnX3RzXCI6MTc4NTc4MjQ5OX0ifQ" target="_blank">www.bontemaison.com/local-area</a><br>
+<br>
+<a href="https://mandrillapp.com/track/click/31067093/www.bontemaison.com?p=eyJzIjoiOHdxUlJhUXE0QTVNUEh1NkZ2SG0yWHM0U3ZnIiwidiI6MiwicCI6IntcInVcIjozMTA2NzA5MyxcInZcIjoyLFwidXJsXCI6XCJodHRwOlxcXC9cXFwvd3d3LmJvbnRlbWFpc29uLmNvbVxcXC9lYXRpbmctb3V0XCIsXCJpZFwiOlwiYjFmZjc3N2VjY2U1NGM1OGEyY2M3MTM1YzRiZWExMWVcIixcInVybF9pZHNcIjpbXCI1ZDA2MmNlOGVkMTMxZjQxMTcxNTc5NmJmYjA5MmUwMjQ1MTE3OTdmXCJdLFwibXNnX3RzXCI6MTc4NTc4MjQ5OX0ifQ" target="_blank">www.bontemaison.com/eating-out</a><br>
+<br>
+Please give me a call if you'd like to chat anything over.<br>
+<br>
+Many thanks&nbsp;<br>
+<br>
+Jim Cartwright<br>
+<br>
++44 (0)7435 301 371<br>
+<br>
+
+</td>
+</tr>
+<tr class="sc-summary-row-booking">
+<td colspan="2">
+<table class="booking_table" width="100%" align="center" border="1" style="font: 10pt arial, sans-serif;">
+<tr>
+<td bgcolor="#E4E4E4" colspan="3" class="propertyheader"><table width="100%" class="no-border"><tr><td class="no-border" width="100%"><strong style="font-size: 14pt;	line-height: 150%;" class="sc-summary-property-name">Bonte</strong><propertyaddress></propertyaddress><span class="sc-summary-property-notes">
+</span>
+<span class="sc-summary-property-notes">
+</span>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+<tr class="sc-summary-row-arrival">
+<td width="20%">Arrival date: </td>
+<td colspan="2">Sun 16 May 2027 from 16:00</td>
+</tr>
+<tr class="sc-summary-row-departure">
+<td>Departure date: </td>
+<td colspan="2">Sun 23 May 2027 (7 nights) by 10:00</td>
+</tr>
+<tr class="sc-summary-row-guests">
+<td>Guests:</td>
+<td colspan="2">Adults: 8 Children: 0 Infants: 0<guestnames></guestnames></td>
+</tr>
+<tr bgcolor="#CCCCCC" class="sc-summary-row-property-total">
+<td align="left" colspan="2" class="light_grey">Property total: </td>
+<td align="left" class="light_grey" width="15%"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:none;font: 10pt arial, sans-serif;"><tr><td width="40%" style="border:none;"><strong>GBP</strong></td><td align="right" width="59%" style="border:none; text-align:right;"><strong>2,495.00</strong></td></tr></table></td>
+</tr>
+</table>
+</td>
+</tr>
+<tr class="sc-summary-row-payment">
+<td colspan="2">
+<table width="100%" border="1" align="center" cellpadding="0" class="booking_table sc-summary-payment-table" style="font: 10pt arial, sans-serif;">
+<tr>
+<td colspan="3"><strong style="font-size: 14pt; line-height: 150%;">Payment summary</strong></td>
+</tr>
+<tr class="sc-summary-row-payment-deposit">
+<td width="15%">Deposit:</td>
+<td colspan="1">Paid</td>
+<td width="15%" align="left"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:none;font: 10pt arial, sans-serif;"><tr><td width="40%" style="border:none;">GBP</td><td align="right" width="59%" style="border:none; text-align:right;">623.75</td></tr></table></td>
+</tr>
+<tr class="sc-summary-row-payment-balance">
+<td width="15%">Balance: </td>
+<td colspan="1">
+GBP 1,871.25 due Sun 14 Mar 2027 [Pay using <a class="sc-summary-payment-link" href="https://mandrillapp.com/track/click/31067093/secure.supercontrol.co.uk?p=eyJzIjoiMl9YZlZLZTVNMjg0NHNPX3hQQ3U5WjZRWGs4IiwidiI6MiwicCI6IntcInVcIjozMTA2NzA5MyxcInZcIjoyLFwidXJsXCI6XCJodHRwczpcXFwvXFxcL3NlY3VyZS5zdXBlcmNvbnRyb2wuY28udWtcXFwvcGF5bWVudHNcXFwvMjUyNTktMTYyODY0NzY1LTUwNTczXCIsXCJpZFwiOlwiYjFmZjc3N2VjY2U1NGM1OGEyY2M3MTM1YzRiZWExMWVcIixcInVybF9pZHNcIjpbXCI0MTY1MzdlZDE1YTA0ZTJjZDExMDQxMDAwMWNkMWQ0MjQwZmExNjY4XCJdLFwibXNnX3RzXCI6MTc4NTc4MjQ5OX0ifQ">Card</a> ]</td>
+<td width="15%" align="left"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:none;font: 10pt arial, sans-serif;"><tr><td width="40%" style="border:none;">GBP</td><td align="right" width="59%" style="border:none; text-align:right;">1,871.25</td></tr></table></td>
+</tr>
+<tr class="sc-summary-row-payment-total" bgcolor="#CCCCCC">
+<th align="left" width="20%">Grand total: </th>
+<th>
+&nbsp;</th>
+<th nowrap="" width="15%" align="left" style="text-align:left;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:none;font: 10pt arial, sans-serif;"><tr><td width="40%" style="border:none;"><strong>GBP</strong></td><td align="right" width="59%" style="border:none; text-align:right;"><strong>2,495.00</strong></td></tr></table></th>
+</tr>
+<tr class="sc-summary-row-payment">
+<td>Paid:</td>
+<td colspan="1">03 Aug 2026 Deposit Payment Mastercard 4462-xxxx-xxxx-3428</td>
+<td nowrap="" width="15%" align="left"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:none;font: 10pt arial, sans-serif;"><tr><td width="40%" style="border:none;">GBP</td><td align="right" width="59%" style="border:none; text-align:right;">623.75</td></tr></table></td>
+</tr>
+<tr class="sc-summary-row-payment-outstanding">
+<th align="left" bgcolor="#CCCCCC">Total outstanding:</th>
+<th bgcolor="#CCCCCC" colspan="1">
+ [Pay using <a class="sc-summary-payment-link" href="https://mandrillapp.com/track/click/31067093/secure.supercontrol.co.uk?p=eyJzIjoiMl9YZlZLZTVNMjg0NHNPX3hQQ3U5WjZRWGs4IiwidiI6MiwicCI6IntcInVcIjozMTA2NzA5MyxcInZcIjoyLFwidXJsXCI6XCJodHRwczpcXFwvXFxcL3NlY3VyZS5zdXBlcmNvbnRyb2wuY28udWtcXFwvcGF5bWVudHNcXFwvMjUyNTktMTYyODY0NzY1LTUwNTczXCIsXCJpZFwiOlwiYjFmZjc3N2VjY2U1NGM1OGEyY2M3MTM1YzRiZWExMWVcIixcInVybF9pZHNcIjpbXCI0MTY1MzdlZDE1YTA0ZTJjZDExMDQxMDAwMWNkMWQ0MjQwZmExNjY4XCJdLFwibXNnX3RzXCI6MTc4NTc4MjQ5OX0ifQ">Card</a> ]&nbsp;</th>
+<th align="left" bgcolor="#CCCCCC" nowrap="" width="15%" style="text-align:left;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:none;font: 10pt arial, sans-serif;"><tr><td width="40%" style="border:none;"><strong>GBP</strong></td><td align="right" width="59%" style="border:none; text-align:right;"><strong>1,871.25</strong></td></tr></table></th>
+</tr>
+</table></td>
+</tr>
+<tr>
+<td colspan="3">
+<table width="100%" border="1" align="center" cellpadding="0" class="booking_table" style="font: 10pt arial, sans-serif;">
+<tr><td colspan="2"><strong style="font-size: 14pt; line-height: 150%;">Security deposits</strong></td></tr>
+<tr>
+<th width="85%" align="left">Type</th>
+<th width="15%" align="left" style="text-align: right;">Amount</th>
+</tr>
+<tr>
+<td>Pre-auth card (awaiting pre-authorisation)</td>
+<td align="left"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:none;font: 10pt arial, sans-serif;"><tr><td width="40%" style="border:none;">GBP</td><td align="right" width="59%" style="border:none; text-align:right;">200.00</td></tr></table></td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</div>
+
+<img src="https://mandrillapp.com/track/open.php?u=31067093&amp;id=b1ff777ecce54c58a2cc7135c4bea11e" height="1" width="1" alt="">
+--_av-pZgVtgLaBDBL8YUoCkspUw--

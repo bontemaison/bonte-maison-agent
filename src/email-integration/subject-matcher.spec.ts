@@ -1,7 +1,10 @@
 import {
+  BOOKING_RECORD_SUBJECT,
+  isBookingRecordEmail,
   isSuperControlSender,
   matchSubject,
   SUPERCONTROL_CONFIG,
+  SUPERCONTROL_RELAY_SENDER,
 } from './subject-matcher';
 
 describe('matchSubject (SuperControl exact subjects)', () => {
@@ -14,6 +17,17 @@ describe('matchSubject (SuperControl exact subjects)', () => {
   it('is tolerant of case and whitespace differences', () => {
     expect(matchSubject('your stay at bonté is confirmed')).toBe('nudge_booking_confirmation');
     expect(matchSubject('  Your Stay at Bonté   is   Confirmed  ')).toBe('nudge_booking_confirmation');
+  });
+
+  it('normalises accents so "Bonte" matches the accented "Bonté" subject', () => {
+    // Real SuperControl deliveries — and mail clients re-saving them as .eml —
+    // have shown up with the accent silently dropped.
+    expect(matchSubject('Your Stay at Bonte is Confirmed')).toBe(
+      'nudge_booking_confirmation',
+    );
+    expect(isBookingRecordEmail('Deposit paid for your holiday at Bonté')).toBe(
+      true,
+    );
   });
 
   it("normalises unicode dashes so en/em-dashes don't break matching", () => {
@@ -41,16 +55,55 @@ describe('matchSubject (SuperControl exact subjects)', () => {
   });
 });
 
+describe('isBookingRecordEmail', () => {
+  it('recognises the deposit-paid email that carries the guest record', () => {
+    expect(isBookingRecordEmail(BOOKING_RECORD_SUBJECT)).toBe(true);
+    expect(isBookingRecordEmail('deposit paid for your holiday at bonte')).toBe(true);
+    expect(isBookingRecordEmail('  Deposit  paid for your holiday at Bonte ')).toBe(true);
+  });
+
+  it('does not collide with the nudge subjects', () => {
+    for (const subject of Object.values(SUPERCONTROL_CONFIG.subjects)) {
+      expect(isBookingRecordEmail(subject)).toBe(false);
+    }
+    // The later full-confirmation email must stay a nudge, not a record write.
+    expect(matchSubject(SUPERCONTROL_CONFIG.subjects.nudge_booking_confirmation)).toBe(
+      'nudge_booking_confirmation',
+    );
+    expect(matchSubject(BOOKING_RECORD_SUBJECT)).toBeNull();
+  });
+
+  it('returns false for anything else', () => {
+    expect(isBookingRecordEmail('Marketing newsletter')).toBe(false);
+    expect(isBookingRecordEmail('')).toBe(false);
+    expect(isBookingRecordEmail(null)).toBe(false);
+    expect(isBookingRecordEmail(undefined)).toBe(false);
+  });
+});
+
 describe('isSuperControlSender', () => {
-  it('accepts the configured sender, case-insensitively', () => {
+  it('accepts the friendly sender, case-insensitively', () => {
     expect(isSuperControlSender('bookings@bontemaison.com')).toBe(true);
     expect(isSuperControlSender('Bookings@BonteMaison.com')).toBe(true);
     expect(isSuperControlSender('  bookings@bontemaison.com  ')).toBe(true);
   });
 
+  // SuperControl relays through Mandrill, so the envelope From is rewritten.
+  // Rejecting this form drops every real SuperControl email.
+  it('accepts the Mandrill relay sender', () => {
+    expect(isSuperControlSender(SUPERCONTROL_RELAY_SENDER)).toBe(true);
+    expect(
+      isSuperControlSender('bookings=bontemaison.com@secure-booking-email.net'),
+    ).toBe(true);
+    expect(
+      isSuperControlSender('Bookings=BonteMaison.com@Secure-Booking-Email.net'),
+    ).toBe(true);
+  });
+
   it('rejects anything else', () => {
     expect(isSuperControlSender('jim@bontemaison.com')).toBe(false);
     expect(isSuperControlSender('nadine@fosterlabs.dev')).toBe(false);
+    expect(isSuperControlSender('someone@secure-booking-email.net')).toBe(false);
     expect(isSuperControlSender('')).toBe(false);
     expect(isSuperControlSender(null)).toBe(false);
     expect(isSuperControlSender(undefined)).toBe(false);

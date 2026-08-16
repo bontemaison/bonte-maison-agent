@@ -12,6 +12,7 @@ export type LogModule =
   | 'messagelog'
   | 'knowledge-base'
   | 'holds'
+  | 'guests'
   | 'follow-ups'
   | 'notifications'
   | 'email-integration'
@@ -41,6 +42,7 @@ const MODULE_COLOR: Record<LogModule, string> = {
   messagelog: '\x1b[96m',
   'knowledge-base': '\x1b[93m',
   holds: '\x1b[93m',
+  guests: '\x1b[97m',
   'follow-ups': '\x1b[94m',
   notifications: '\x1b[92m',
   'email-integration': '\x1b[95m',

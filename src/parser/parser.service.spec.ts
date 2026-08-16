@@ -13,7 +13,7 @@ jest.mock('@anthropic-ai/sdk', () =>
 const makeConfig = (
   values: Record<string, string | undefined> = {
     ANTHROPIC_API_KEY: 'test-key',
-    CLAUDE_MODEL: 'claude-haiku-4-5-20251001',
+    CLAUDE_MODEL: 'claude-sonnet-5',
   },
 ): ConfigService =>
   ({ get: (key: string) => values[key] }) as unknown as ConfigService;
@@ -102,7 +102,7 @@ describe('ParserService', () => {
 
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-5',
         messages: expect.arrayContaining([
           expect.objectContaining({
             role: 'user',
@@ -179,6 +179,22 @@ describe('ParserService', () => {
       expect.stringContaining('JSON'),
       expect.any(Object),
     );
+  });
+
+  it('skips a leading thinking block and parses the text block that follows', async () => {
+    mockCreate.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        claudeResponse(fullJson({ intent: 'greeting', confidence: 0.9 }))
+          .content[0],
+      ],
+    });
+    const service = new ParserService(makeConfig(), makeLogger());
+
+    const out = await service.parse('hi');
+
+    expect(out.intent).toBe('greeting');
+    expect(out.confidence).toBe(0.9);
   });
 
   it('logs and rethrows when the Claude API call fails', async () => {

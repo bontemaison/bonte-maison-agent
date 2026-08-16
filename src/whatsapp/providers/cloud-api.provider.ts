@@ -1,19 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError } from 'axios';
-import * as crypto from 'crypto';
 import { LoggerService } from '../../logger/logger.service';
 import {
   IncomingMessage,
   OutboundEcho,
   SendResult,
-  SignatureDebug,
   WhatsAppProvider,
 } from './provider.interface';
 
 const DEFAULT_GRAPH_VERSION = 'v25.0';
 const RETRY_DELAY_MS = 500;
-const META_API_HOST = 'https://graph.facebook.com';
 const DUALHOOK_API_HOST = 'https://api.dualhook.com';
 
 type CloudApiMessage = {
@@ -45,9 +42,6 @@ type CloudApiPayload = {
 export class CloudApiProvider implements WhatsAppProvider {
   private readonly url: string;
   private readonly accessToken: string;
-  private readonly appSecret: string;
-  private readonly verifyToken: string;
-  private readonly skipSignatureCheck: boolean;
 
   constructor(
     config: ConfigService,
@@ -55,44 +49,20 @@ export class CloudApiProvider implements WhatsAppProvider {
   ) {
     const phoneId = config.get<string>('WHATSAPP_PHONE_NUMBER_ID');
     // Dualhook relays the standard Cloud API payload: same path, same body,
-    // only the hostname and the bearer credential change. Everything below
-    // (webhooks, signatures, echoes) still comes straight from Meta.
-    const isDualhook =
-      (config.get<string>('WHATSAPP_PROVIDER') ?? '').toLowerCase() === 'dualhook';
-    const token = isDualhook
-      ? config.get<string>('DUALHOOK_LIVE_KEY')
-      : config.get<string>('WHATSAPP_ACCESS_TOKEN');
+    // only the hostname and the bearer credential differ from Meta's own
+    // endpoint. Inbound webhooks are not relayed — they still arrive direct
+    // from Meta.
+    const token = config.get<string>('DUALHOOK_LIVE_KEY');
     if (!phoneId || !token) {
-      throw new Error(
-        isDualhook
-          ? 'WHATSAPP_PHONE_NUMBER_ID and DUALHOOK_LIVE_KEY must be set'
-          : 'WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN must be set',
-      );
+      throw new Error('WHATSAPP_PHONE_NUMBER_ID and DUALHOOK_LIVE_KEY must be set');
     }
     const version = config.get<string>('WHATSAPP_GRAPH_VERSION') ?? DEFAULT_GRAPH_VERSION;
-    const host = isDualhook ? DUALHOOK_API_HOST : META_API_HOST;
-    this.url = `${host}/${version}/${phoneId}/messages`;
+    this.url = `${DUALHOOK_API_HOST}/${version}/${phoneId}/messages`;
     this.accessToken = token;
     this.logger.info('whatsapp', 'outbound endpoint configured', {
       url: this.url,
-      credential: isDualhook ? 'DUALHOOK_LIVE_KEY' : 'WHATSAPP_ACCESS_TOKEN',
+      credential: 'DUALHOOK_LIVE_KEY',
     });
-    this.appSecret = config.get<string>('WHATSAPP_APP_SECRET') ?? '';
-    this.verifyToken = config.get<string>('WHATSAPP_VERIFY_TOKEN') ?? '';
-    // Escape hatch for Dualhook-style Webhook Override setups where Meta
-    // signs with a BSP-owned app secret we can never obtain. Set this only
-    // when you've compensated with a hard-to-guess URL path and ideally an
-    // IP allowlist for Meta's webhook ranges — otherwise the endpoint is
-    // open to forged payloads.
-    this.skipSignatureCheck =
-      (config.get<string>('WHATSAPP_SKIP_SIGNATURE_CHECK') ?? '').toLowerCase() === 'true';
-    if (this.skipSignatureCheck) {
-      this.logger.warn(
-        'whatsapp',
-        'WHATSAPP_SKIP_SIGNATURE_CHECK=true — webhook HMAC verification is DISABLED',
-        {},
-      );
-    }
   }
 
   async sendMessage(to: string, text: string): Promise<SendResult> {
@@ -202,44 +172,6 @@ export class CloudApiProvider implements WhatsAppProvider {
       }
     }
     return null;
-  }
-
-  validateWebhookSignature(
-    raw: Buffer,
-    headers: Record<string, string | undefined>,
-  ): boolean {
-    if (this.skipSignatureCheck) return true;
-    const header = headers['x-hub-signature-256'];
-    if (!header || !this.appSecret) return false;
-    const expected =
-      'sha256=' + crypto.createHmac('sha256', this.appSecret).update(raw).digest('hex');
-    const expectedBuf = Buffer.from(expected);
-    const givenBuf = Buffer.from(header);
-    if (expectedBuf.length !== givenBuf.length) return false;
-    return crypto.timingSafeEqual(expectedBuf, givenBuf);
-  }
-
-  debugSignature(
-    raw: Buffer,
-    headers: Record<string, string | undefined>,
-  ): SignatureDebug {
-    const received = headers['x-hub-signature-256'];
-    const expected = this.appSecret
-      ? 'sha256=' + crypto.createHmac('sha256', this.appSecret).update(raw).digest('hex')
-      : undefined;
-    return {
-      received,
-      expected,
-      bodyLength: raw.length,
-      appSecretConfigured: Boolean(this.appSecret),
-    };
-  }
-
-  verifyWebhook(mode: string, token: string, challenge: string): string {
-    if (mode !== 'subscribe' || token !== this.verifyToken) {
-      throw new Error('verification failed');
-    }
-    return challenge;
   }
 
   private async post(

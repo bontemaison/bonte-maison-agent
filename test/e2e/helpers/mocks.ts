@@ -253,8 +253,4 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
   parseWebhook(_payload: unknown): IncomingMessage | null {
     return null;
   }
-
-  validateWebhookSignature(): boolean {
-    return true;
-  }
 }

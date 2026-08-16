@@ -1,7 +1,7 @@
 /**
- * Send all 8 SuperControl nudge texts to a single phone number as WATI
- * session messages (sendSessionMessage). Useful for previewing the wording
- * end-to-end in WhatsApp without burning Meta template billing.
+ * Send all 8 SuperControl nudge texts to a single phone number as session
+ * messages (sendMessage). Useful for previewing the wording end-to-end in
+ * WhatsApp without burning Meta template billing.
  *
  * IMPORTANT — session-message window:
  *   WhatsApp only allows free-form session messages within 24h of the

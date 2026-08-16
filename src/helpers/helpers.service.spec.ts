@@ -133,6 +133,122 @@ describe('HelpersService.monthAvailabilitySummary', () => {
   });
 });
 
+describe('HelpersService.nearbyAvailabilitySummary', () => {
+  it('queries a window spanning monthsBefore/monthsAfter around the target', async () => {
+    const availability = makeAvailability([]);
+    const svc = new HelpersService(
+      availability,
+      makePricing({}),
+      makeHolds(),
+      makeLogger(),
+    );
+
+    await svc.nearbyAvailabilitySummary(new Date('2026-09-15'));
+
+    expect(availability.findAvailableSundayWeeks).toHaveBeenCalledWith(
+      new Date(Date.UTC(2026, 6, 1)), // 2 months before September = July
+      new Date(Date.UTC(2026, 11, 1)), // 2 months after September, exclusive = December
+    );
+  });
+
+  it('returns priced weeks from the wider window', async () => {
+    const availability = makeAvailability([
+      { checkIn: '2026-10-04', checkOut: '2026-10-11' },
+    ]);
+    const pricing = makePricing({
+      '2026-10-04': { total: 2495, weeklyRate: 2495, label: 'Low season' },
+    });
+    const svc = new HelpersService(
+      availability,
+      pricing,
+      makeHolds(),
+      makeLogger(),
+    );
+
+    const result = await svc.nearbyAvailabilitySummary(new Date('2026-09-06'));
+
+    expect(result).toEqual([
+      {
+        checkIn: new Date('2026-10-04'),
+        checkOut: new Date('2026-10-11'),
+        total: 2495,
+        weeklyRate: 2495,
+        label: 'Low season',
+      },
+    ]);
+  });
+});
+
+describe('HelpersService.nearestAvailableWeeks', () => {
+  it('returns the closest `count` weeks within the wide window, priced', async () => {
+    const availability = makeAvailability([
+      { checkIn: '2026-11-08', checkOut: '2026-11-15' }, // 3 weeks before
+      { checkIn: '2026-11-29', checkOut: '2026-12-06' }, // exactly 1 week before
+      { checkIn: '2026-12-13', checkOut: '2026-12-20' }, // 1 week after
+      { checkIn: '2027-01-03', checkOut: '2027-01-10' }, // far after
+    ]);
+    const pricing = makePricing({
+      '2026-11-29': { total: 2000, weeklyRate: 2000 },
+      '2026-12-13': { total: 2200, weeklyRate: 2200 },
+    });
+    const svc = new HelpersService(
+      availability,
+      pricing,
+      makeHolds(),
+      makeLogger(),
+    );
+
+    const result = await svc.nearestAvailableWeeks(
+      new Date('2026-12-06'),
+      2,
+    );
+
+    // Nov 29 and Dec 13 are equidistant (7 days); future wins the tie,
+    // matching findClosestAvailableWeek's convention.
+    expect(result.map((w) => w.checkIn.toISOString().slice(0, 10))).toEqual([
+      '2026-12-13',
+      '2026-11-29',
+    ]);
+  });
+
+  it('only prices the selected weeks, not the whole window', async () => {
+    const availability = makeAvailability([
+      { checkIn: '2026-11-29', checkOut: '2026-12-06' },
+      { checkIn: '2027-01-03', checkOut: '2027-01-10' },
+    ]);
+    const pricing = makePricing({
+      '2026-11-29': { total: 2000, weeklyRate: 2000 },
+    });
+    const svc = new HelpersService(
+      availability,
+      pricing,
+      makeHolds(),
+      makeLogger(),
+    );
+
+    const result = await svc.nearestAvailableWeeks(
+      new Date('2026-12-06'),
+      1,
+    );
+
+    expect(result).toHaveLength(1);
+    expect((pricing.calculate as jest.Mock).mock.calls).toHaveLength(1);
+  });
+
+  it('returns an empty array when nothing is open in the window', async () => {
+    const svc = new HelpersService(
+      makeAvailability([]),
+      makePricing({}),
+      makeHolds(),
+      makeLogger(),
+    );
+
+    const result = await svc.nearestAvailableWeeks(new Date('2026-12-06'));
+
+    expect(result).toEqual([]);
+  });
+});
+
 describe('HelpersService.checkExistingHold', () => {
   it('proxies to holds service', async () => {
     const hold = {

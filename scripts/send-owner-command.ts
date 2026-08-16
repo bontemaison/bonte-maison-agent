@@ -18,7 +18,7 @@
  * --dry-run) the reply goes out over the configured WhatsApp provider to
  * your real phone.
  *
- * Requires .env with at least: OWNER_PHONE, AIRTABLE_*, WATI_* or WHATSAPP_*.
+ * Requires .env with at least: OWNER_PHONE, AIRTABLE_*, WHATSAPP_*, DUALHOOK_LIVE_KEY.
  */
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';

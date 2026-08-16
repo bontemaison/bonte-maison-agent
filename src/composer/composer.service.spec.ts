@@ -13,7 +13,7 @@ jest.mock('@anthropic-ai/sdk', () =>
 const makeConfig = (
   values: Record<string, string | undefined> = {
     ANTHROPIC_API_KEY: 'test-key',
-    CLAUDE_RESPONSE_MODEL: 'claude-sonnet-4-6',
+    CLAUDE_MODEL: 'claude-sonnet-5',
   },
 ): ConfigService =>
   ({ get: (key: string) => values[key] }) as unknown as ConfigService;
@@ -168,6 +168,24 @@ describe('ComposerService', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe('empty_output');
+    }
+  });
+
+  it('skips a leading thinking block and uses the text block that follows', async () => {
+    mockCreate.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        claudeText('Sunday to Sunday works well, and September has open weeks.')
+          .content[0],
+      ],
+    });
+    const svc = new ComposerService(makeLogger(), makeConfig());
+
+    const result = await svc.compose(basePkg());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.text).toContain('Sunday to Sunday');
     }
   });
 

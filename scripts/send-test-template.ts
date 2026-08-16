@@ -16,8 +16,8 @@
  *
  * Notes:
  * - Uses `override: true` so it ignores conversation pause state.
- * - Routes through WhatsappService → configured provider (cloud_api or wati),
- *   so this is the exact same code path as the email dispatcher.
+ * - Routes through WhatsappService → Dualhook, so this is the exact same code
+ *   path as the email dispatcher.
  * - On error 131000 / 131047 / 132xxx: check the dashboard. 131000 family is
  *   usually billing / payment method on the WABA. 132xxx is template approval
  *   status or template-language mismatch.

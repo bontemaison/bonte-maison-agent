@@ -1,9 +1,17 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ImapFlow } from 'imapflow';
+import { simpleParser } from 'mailparser';
+import { GuestsService } from '../guests/guests.service';
 import { LoggerService } from '../logger/logger.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { parseBookingEmail } from './booking-email.parser';
 import { NudgeDispatcherService } from './nudge-dispatcher.service';
-import { matchSubject, SUPERCONTROL_CONFIG } from './subject-matcher';
+import {
+  isBookingRecordEmail,
+  matchSubject,
+  SUPERCONTROL_CONFIG,
+} from './subject-matcher';
 
 type Envelope = {
   messageId?: string;
@@ -59,6 +67,8 @@ export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
     config: ConfigService,
     private readonly logger: LoggerService,
     private readonly dispatcher: NudgeDispatcherService,
+    private readonly guests: GuestsService,
+    private readonly notifications: NotificationsService,
   ) {
     this.host = config.get<string>('SUPERCONTROL_IMAP_HOST');
     this.user = config.get<string>('SUPERCONTROL_IMAP_USER');
@@ -73,7 +83,7 @@ export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
 
     const extra = config.get<string>('SUPERCONTROL_EXTRA_SENDERS');
     this.allowedSenders = new Set<string>([
-      SUPERCONTROL_CONFIG.senderEmail.toLowerCase(),
+      ...SUPERCONTROL_CONFIG.senderEmails.map((s) => s.toLowerCase()),
       ...(extra
         ? extra.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
         : []),
@@ -143,7 +153,7 @@ export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
         const toMark: number[] = [];
         for (let i = 0; i < queue.length; i++) {
           const { env, uid } = queue[i];
-          const handled = await this.handle(env, uid);
+          const handled = await this.handle(env, uid, client);
           if (handled && uid) toMark.push(uid);
           if (i < queue.length - 1) {
             await sleep(this.dispatchSpacingMs);
@@ -169,7 +179,11 @@ export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async handle(env: Envelope | undefined, uid: number | undefined): Promise<boolean> {
+  private async handle(
+    env: Envelope | undefined,
+    uid: number | undefined,
+    client: ImapFlow,
+  ): Promise<boolean> {
     if (!env) return false;
 
     const messageId = env.messageId ?? (uid !== undefined ? `uid-${uid}` : '');
@@ -196,6 +210,14 @@ export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
         from: fromAddr,
         subject,
       });
+      return true;
+    }
+
+    // The booking-record email carries the guest's phone number — the join key
+    // for guest recognition. It triggers a write to the Guests table and no
+    // WhatsApp send, so it never reaches the nudge dispatcher.
+    if (isBookingRecordEmail(subject)) {
+      await this.ingestBooking(uid, client, subject, messageId);
       return true;
     }
 
@@ -232,5 +254,78 @@ export class EmailWatcherService implements OnModuleInit, OnModuleDestroy {
     }
 
     return true;
+  }
+
+  /**
+   * Pulls the body of a booking-record email and writes the guest to Airtable.
+   *
+   * The body is only fetched for this one subject — the eight nudge types stay
+   * on the cheap envelope-only path. It must go through `simpleParser` before
+   * any regex touches it: SuperControl's text part is quoted-printable and
+   * breaks words across lines ("rec=\neived", "Bont=C3=A9").
+   *
+   * A failure here is logged and reported to Jim, then the message is still
+   * marked seen. Leaving it unread would retry the same unparseable email on
+   * every poll.
+   */
+  private async ingestBooking(
+    uid: number | undefined,
+    client: ImapFlow,
+    subject: string,
+    messageId: string,
+  ): Promise<void> {
+    try {
+      if (uid === undefined) {
+        throw new Error('booking email has no uid; cannot fetch body');
+      }
+
+      const fetched = await client.fetchOne(
+        String(uid),
+        { source: true },
+        { uid: true },
+      );
+      const source = fetched ? fetched.source : null;
+      if (!source) throw new Error('could not download booking email body');
+
+      const mail = await simpleParser(source);
+      const booking = parseBookingEmail(mail.text ?? '', mail.html || undefined);
+
+      if (!booking) {
+        throw new Error('booking email did not match the expected layout');
+      }
+
+      await this.guests.upsertByBookingRef(booking, 'supercontrol_email');
+      this.logger.info('email-integration', 'guest record written from booking email', {
+        bookingRef: booking.bookingRef,
+        phone: booking.phone,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        messageId,
+      });
+
+      // Without a phone number the guest can never be recognised on WhatsApp,
+      // so Jim has to add it by hand. Say so rather than failing quietly.
+      if (!booking.phone) {
+        await this.notifications
+          .notifyOwner(
+            `Booking ${booking.bookingRef} for ${booking.guestName || 'a guest'} came through without a phone number. Add it to the Guests row in Airtable so the bot can recognise them on WhatsApp.`,
+            { reason: 'booking_missing_phone', extra: { bookingRef: booking.bookingRef } },
+          )
+          .catch(() => undefined);
+      }
+    } catch (err) {
+      const error = (err as Error).message;
+      this.logger.error('email-integration', 'booking email ingestion failed', {
+        error,
+        subject,
+        messageId,
+      });
+      await this.notifications
+        .notifyOwner(
+          `Couldn't read a SuperControl booking email ("${subject}"), so no guest record was created. Worth adding that booking to the Guests table by hand.`,
+          { reason: 'booking_parse_failed', extra: { messageId, error } },
+        )
+        .catch(() => undefined);
+    }
   }
 }

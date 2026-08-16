@@ -5,7 +5,6 @@ import { LoggerService } from '../logger/logger.service';
 import type {
   IncomingMessage,
   OutboundEcho,
-  SignatureDebug,
   WhatsAppProvider,
 } from './providers/provider.interface';
 
@@ -71,12 +70,6 @@ export class WhatsappService {
     if (result?.id) this.markSent(result.id);
   }
 
-  async assignToHuman(conversationId: string): Promise<void> {
-    if (this.provider.assignToHuman) {
-      await this.provider.assignToHuman(conversationId);
-    }
-  }
-
   parseWebhook(payload: unknown): IncomingMessage | null {
     return this.provider.parseWebhook(payload);
   }
@@ -95,24 +88,10 @@ export class WhatsappService {
     return true;
   }
 
-  validateWebhookSignature(
-    raw: Buffer,
-    headers: Record<string, string | undefined>,
-  ): boolean {
-    return this.provider.validateWebhookSignature(raw, headers);
-  }
-
-  debugSignature(
-    raw: Buffer,
-    headers: Record<string, string | undefined>,
-  ): SignatureDebug | null {
-    return this.provider.debugSignature?.(raw, headers) ?? null;
-  }
-
-  // Meta's webhook verification handshake is provider-agnostic: it just needs
-  // the verify token to match. Handle it here so it works regardless of which
-  // provider is active (e.g. WATI's API doesn't use this, but the underlying
-  // Meta Business app may still verify against our URL).
+  // Meta's webhook verification handshake only needs the verify token to
+  // match. Inbound webhooks come straight from Meta (Dualhook relays outbound
+  // only), so this is checked here against WHATSAPP_VERIFY_TOKEN rather than
+  // in the provider.
   verifyWebhook(mode: string, token: string, challenge: string): string {
     const expected = this.config.get<string>('WHATSAPP_VERIFY_TOKEN');
     if (!expected) {

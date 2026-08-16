@@ -84,6 +84,27 @@ export class HelpersService {
     return this.summarizeRange(start, end);
   }
 
+  /**
+   * Free Sunday-to-Sunday weeks within `monthsBefore`/`monthsAfter` calendar
+   * months of `target`, with pricing. Used to offer real alternatives when a
+   * guest's requested dates, or asked-about month, come back unavailable —
+   * Jim's ask is that the bot surface these itself instead of him having to
+   * follow up by hand.
+   */
+  async nearbyAvailabilitySummary(
+    target: Date,
+    monthsBefore = 2,
+    monthsAfter = 2,
+  ): Promise<WeekWithPrice[]> {
+    const start = new Date(
+      Date.UTC(target.getUTCFullYear(), target.getUTCMonth() - monthsBefore, 1),
+    );
+    const end = new Date(
+      Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + monthsAfter + 1, 1),
+    );
+    return this.summarizeRange(start, end);
+  }
+
   async getPricingForDateRange(
     checkIn: Date,
     checkOut: Date,
@@ -104,6 +125,60 @@ export class HelpersService {
     return this.holds.getActiveHoldForPhone(phone);
   }
 
+  /**
+   * Fallback for when `nearbyAvailabilitySummary`'s two-month window is
+   * empty (a fully-booked season): the `count` open Sunday-to-Sunday weeks
+   * closest to `target`, however far out they are, within `windowDays`
+   * either side. Only the selected weeks are priced, not the whole window.
+   */
+  async nearestAvailableWeeks(
+    target: Date,
+    count = 2,
+    windowDays = 365,
+  ): Promise<WeekWithPrice[]> {
+    const start = new Date(target.getTime() - windowDays * DAY_MS);
+    const end = new Date(target.getTime() + windowDays * DAY_MS);
+    const weeks = await this.availability.findAvailableSundayWeeks(
+      start,
+      end,
+    );
+    const targetTime = target.getTime();
+    // Same tie-break as findClosestAvailableWeek: nearest first, future
+    // preferred over past at equal distance.
+    const score = (w: AvailableWeek): [number, number] => {
+      const delta = w.checkIn.getTime() - targetTime;
+      return [Math.abs(delta), delta < 0 ? 1 : 0];
+    };
+    const closest = weeks
+      .slice()
+      .sort((a, b) => {
+        const [absA, pastA] = score(a);
+        const [absB, pastB] = score(b);
+        return absA !== absB ? absA - absB : pastA - pastB;
+      })
+      .slice(0, count);
+
+    const enriched: WeekWithPrice[] = [];
+    for (const w of closest) {
+      const priced = await this.priceWeek(w);
+      if (priced) enriched.push(priced);
+    }
+    return enriched;
+  }
+
+  private async priceWeek(w: AvailableWeek): Promise<WeekWithPrice | null> {
+    const quote = await this.getPricingForDateRange(w.checkIn, w.checkOut);
+    if (!quote) return null;
+    return {
+      checkIn: w.checkIn,
+      checkOut: w.checkOut,
+      total: quote.total,
+      weeklyRate: quote.weeklyRate,
+      label: quote.label,
+      usedBase: quote.usedBase,
+    };
+  }
+
   private async summarizeRange(
     start: Date,
     end: Date,
@@ -111,16 +186,8 @@ export class HelpersService {
     const weeks = await this.availability.findAvailableSundayWeeks(start, end);
     const enriched: WeekWithPrice[] = [];
     for (const w of weeks) {
-      const quote = await this.getPricingForDateRange(w.checkIn, w.checkOut);
-      if (!quote) continue;
-      enriched.push({
-        checkIn: w.checkIn,
-        checkOut: w.checkOut,
-        total: quote.total,
-        weeklyRate: quote.weeklyRate,
-        label: quote.label,
-        usedBase: quote.usedBase,
-      });
+      const priced = await this.priceWeek(w);
+      if (priced) enriched.push(priced);
     }
     return enriched;
   }

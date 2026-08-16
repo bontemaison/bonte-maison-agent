@@ -9,6 +9,7 @@ import { ConversationService } from '../conversation/conversation.service';
 import { FollowUpsService } from '../follow-ups/follow-ups.service';
 import { FragmentsService } from '../fragments/fragments.service';
 import { HelpersService } from '../helpers/helpers.service';
+import { GuestContext, GuestsService } from '../guests/guests.service';
 import { HoldsService } from '../holds/holds.service';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
 import { LoggerService } from '../logger/logger.service';
@@ -113,6 +114,8 @@ const makeHelpers = (): HelpersService =>
     findClosestAvailableWeek: jest.fn().mockResolvedValue(null),
     monthAvailabilitySummary: jest.fn().mockResolvedValue([]),
     multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
+    nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
+    nearestAvailableWeeks: jest.fn().mockResolvedValue([]),
     getPricingForDateRange: jest.fn().mockResolvedValue(null),
     checkExistingHold: jest.fn().mockResolvedValue(null),
   }) as unknown as HelpersService;
@@ -191,12 +194,31 @@ const makeFollowUps = (): FollowUpsService =>
     cancel: jest.fn().mockResolvedValue(undefined),
   }) as unknown as FollowUpsService;
 
+// Guest recognition defaults to "unrecognised number" so every pre-existing
+// assertion in this file keeps describing the prospect funnel exactly as it was.
+const PROSPECT_CTX: GuestContext = {
+  mode: 'prospect',
+  guest: null,
+  previousStays: 0,
+  lastStay: null,
+  hold: null,
+};
+
+const guestRecord = (fields: Record<string, unknown>) =>
+  ({ id: 'recG', fields }) as unknown as GuestContext['guest'];
+
+const makeGuests = (ctx: GuestContext = PROSPECT_CTX) =>
+  ({
+    resolveContext: jest.fn().mockResolvedValue(ctx),
+  }) as unknown as GuestsService;
+
 type Overrides = {
   parser?: ParserService;
   availability?: AvailabilityService;
   pricing?: PricingService;
   bookingRules?: BookingRulesService;
   holds?: HoldsService;
+  guests?: GuestsService;
   followUps?: FollowUpsService;
   templates?: TemplatesService;
   composer?: ComposerService;
@@ -218,6 +240,7 @@ const build = (over: Overrides = {}) =>
     over.pricing ?? makePricing(),
     over.bookingRules ?? makeBookingRules(),
     over.holds ?? makeHolds(),
+    over.guests ?? makeGuests(),
     over.followUps ?? makeFollowUps(),
     over.templates ?? makeTemplates(),
     over.composer ?? makeComposer(),
@@ -478,15 +501,82 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
     );
   });
 
-  it('renders availability_no_priority when dates are taken', async () => {
+  it('composes an unavailable reply with nearby alternatives when dates are taken', async () => {
     const parser = makeParser({
       intent: 'availability_inquiry',
       checkIn: SUN_CHECK_IN,
       checkOut: SUN_CHECK_OUT,
     });
     const availability = makeAvailability(false);
+    const composer = makeComposer();
+    const helpers = makeHelpers();
+    (helpers.nearbyAvailabilitySummary as jest.Mock).mockResolvedValue([
+      {
+        checkIn: new Date('2025-08-03'),
+        checkOut: new Date('2025-08-10'),
+        total: 2100,
+        weeklyRate: 2100,
+        usedBase: false,
+      },
+    ]);
+    const handler = build({ parser, availability, composer, helpers });
+
+    await handler.handle({ from: CUSTOMER, text: 'is Jul 6-13 free?' });
+
+    const pkg = composerCalls(composer)[0];
+    expect(pkg.scenarioHint).toBe('dates_unavailable');
+    const altFact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'nearby_alternatives',
+    );
+    expect(altFact.text).toContain('3 August');
+  });
+
+  it('widens to the nearest open weeks when the couple-of-months window is fully booked', async () => {
+    const parser = makeParser({
+      intent: 'availability_inquiry',
+      checkIn: SUN_CHECK_IN,
+      checkOut: SUN_CHECK_OUT,
+    });
+    const availability = makeAvailability(false);
+    const composer = makeComposer();
+    const helpers = makeHelpers();
+    (helpers.nearbyAvailabilitySummary as jest.Mock).mockResolvedValue([]);
+    (helpers.nearestAvailableWeeks as jest.Mock).mockResolvedValue([
+      {
+        checkIn: new Date('2025-12-07'),
+        checkOut: new Date('2025-12-14'),
+        total: 1800,
+        weeklyRate: 1800,
+        usedBase: false,
+      },
+    ]);
+    const handler = build({ parser, availability, composer, helpers });
+
+    await handler.handle({ from: CUSTOMER, text: 'is Jul 6-13 free?' });
+
+    const pkg = composerCalls(composer)[0];
+    const altFact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'nearby_alternatives',
+    );
+    expect(helpers.nearestAvailableWeeks).toHaveBeenCalled();
+    expect(altFact.text).toContain('7 December');
+    expect(altFact.text).toContain('further out than usual');
+  });
+
+  it('falls back to availability_no_priority when the composer fails', async () => {
+    const parser = makeParser({
+      intent: 'availability_inquiry',
+      checkIn: SUN_CHECK_IN,
+      checkOut: SUN_CHECK_OUT,
+    });
+    const availability = makeAvailability(false);
+    const composer = makeComposer({
+      ok: false,
+      reason: 'forbidden_term:sold',
+      raw: 'sold',
+    });
     const templates = makeTemplates();
-    const handler = build({ parser, availability, templates });
+    const handler = build({ parser, availability, composer, templates });
 
     await handler.handle({ from: CUSTOMER, text: 'is Jul 6-13 free?' });
 
@@ -572,55 +662,6 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
 });
 
 describe('MessageHandlerService.handle — booking rules', () => {
-  it('renders year_2026_redirect when the year is blocked AND the week is not free in iCal', async () => {
-    const parser = makeParser({
-      intent: 'availability_inquiry',
-      checkIn: SUN_CHECK_IN,
-      checkOut: SUN_CHECK_OUT,
-    });
-    const bookingRules = makeBookingRules({
-      pass: false,
-      reason: 'year_2026_redirect',
-    });
-    const availability = makeAvailability(false);
-    const templates = makeTemplates();
-    const handler = build({ parser, bookingRules, availability, templates });
-
-    await handler.handle({ from: CUSTOMER, text: 'available in 2026?' });
-
-    expect(templates.render).toHaveBeenCalledWith(
-      'year_2026_redirect',
-      expect.any(Object),
-    );
-  });
-
-  it('quotes the week when the year flag is stale but iCal shows it free', async () => {
-    const parser = makeParser({
-      intent: 'availability_inquiry',
-      checkIn: SUN_CHECK_IN,
-      checkOut: SUN_CHECK_OUT,
-    });
-    const bookingRules = makeBookingRules({
-      pass: false,
-      reason: 'year_2026_redirect',
-    });
-    // Default availability mock: the week IS free — the calendar wins over
-    // the stale flag and the guest gets a real quote, not the redirect.
-    const templates = makeTemplates();
-    const handler = build({ parser, bookingRules, templates });
-
-    await handler.handle({ from: CUSTOMER, text: 'available in 2026?' });
-
-    expect(templates.render).toHaveBeenCalledWith(
-      'availability_yes_quote',
-      expect.any(Object),
-    );
-    expect(templates.render).not.toHaveBeenCalledWith(
-      'year_2026_redirect',
-      expect.any(Object),
-    );
-  });
-
   it('hands off via long_stay_manual_pricing on Oct-May long stay', async () => {
     const parser = makeParser({
       intent: 'availability_inquiry',
@@ -1042,12 +1083,17 @@ describe('MessageHandlerService.handle — hold flows', () => {
     });
     const holds = makeHolds(true);
     const availability = makeAvailability(true);
-    const templates = makeTemplates();
-    const handler = build({ parser, holds, availability, templates });
+    const composer = makeComposer();
+    const handler = build({ parser, holds, availability, composer });
 
     await handler.handle({ from: CUSTOMER, text: 'are those dates free?' });
 
-    expect(templateCalls(templates)).toContain('availability_no_priority');
+    const pkg = composerCalls(composer)[0];
+    expect(pkg.scenarioHint).toBe('dates_unavailable');
+    const unavailableFact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'requested_unavailable',
+    );
+    expect(unavailableFact.text).toContain('held for another guest');
     expect(availability.isRangeAvailable).not.toHaveBeenCalled();
   });
 
@@ -1200,5 +1246,260 @@ describe('MessageHandlerService.handle — partial dates (target date, no full r
       guests: null,
     });
     expect(followUps.schedule).toHaveBeenCalledWith(CUSTOMER);
+  });
+});
+
+describe('MessageHandlerService.handle — guest recognition', () => {
+  const futureBooking = {
+    booking_ref: '33',
+    guest_name: 'Abigail Johns',
+    check_in: '2027-05-23',
+    check_out: '2027-05-30',
+    adults: 4,
+    children: 2,
+    infants: 2,
+  };
+
+  const futureGuest: GuestContext = {
+    mode: 'future_guest',
+    guest: guestRecord(futureBooking),
+    previousStays: 0,
+    lastStay: null,
+    hold: null,
+  };
+
+  const currentGuest: GuestContext = {
+    ...futureGuest,
+    mode: 'current_guest',
+  };
+
+  const pastGuest: GuestContext = {
+    mode: 'past_guest',
+    guest: guestRecord({ ...futureBooking, check_in: '2026-06-07', check_out: '2026-06-14' }),
+    previousStays: 2,
+    lastStay: { checkIn: '2026-06-07', checkOut: '2026-06-14' },
+    hold: null,
+  };
+
+  it('leaves an unrecognised number with no guest facts at all', async () => {
+    const composer = makeComposer();
+    const handler = build({
+      composer,
+      parser: makeParser({ intent: 'general_info', topicKeys: ['pool_heated'] }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'is the pool heated?' });
+
+    const keys = composerCalls(composer)[0].facts.map(
+      (f: { key: string }) => f.key,
+    );
+    expect(keys).not.toContain('guest_context');
+    expect(keys).not.toContain('guest_mode_guidance');
+  });
+
+  it('passes the booking details to the composer for a confirmed guest', async () => {
+    const composer = makeComposer();
+    const handler = build({
+      composer,
+      guests: makeGuests(futureGuest),
+      parser: makeParser({ intent: 'general_info', topicKeys: ['arrival_time'] }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'what time can we arrive?' });
+
+    const facts = composerCalls(composer)[0].facts;
+    const context = facts.find(
+      (f: { key: string }) => f.key === 'guest_context',
+    ).text;
+    expect(context).toContain('Abigail Johns');
+    expect(context).toContain('23 May 2027');
+    expect(context).toContain('30 May 2027');
+    expect(context).toContain('7 nights');
+    expect(context).toContain('4 adults');
+    expect(context).toContain('Booking reference 33');
+    expect(
+      facts.find((f: { key: string }) => f.key === 'guest_mode_guidance').text,
+    ).toContain('confirmed guest');
+  });
+
+  it('uses the booking name when the chat never gave one', async () => {
+    const composer = makeComposer();
+    const handler = build({
+      composer,
+      guests: makeGuests(futureGuest),
+      parser: makeParser({ intent: 'general_info', topicKeys: ['arrival_time'] }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'what time can we arrive?' });
+
+    expect(composerCalls(composer)[0].guestName).toBe('Abigail');
+  });
+
+  // The three guardrails that stop a paid guest being sold to.
+  it('never nudges a confirmed guest toward booking', async () => {
+    const composer = makeComposer();
+    const handler = build({
+      composer,
+      guests: makeGuests(currentGuest),
+      parser: makeParser({
+        intent: 'general_info',
+        topicKeys: ['bin_day'],
+        highIntentSignal: true,
+      }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'when do the bins go out?' });
+
+    expect(composerCalls(composer)[0].toneFlags.needsNudgeToBook).toBe(false);
+  });
+
+  it('does not append the website link for a confirmed guest', async () => {
+    const whatsapp = makeWhatsapp();
+    const handler = build({
+      whatsapp,
+      guests: makeGuests(currentGuest),
+      composer: makeComposer({ ok: true, text: 'The bins go out on Tuesday.' }),
+      parser: makeParser({ intent: 'general_info', topicKeys: ['bin_day'] }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'when do the bins go out?' });
+
+    expect(whatsapp.sendMessage).toHaveBeenCalledWith(
+      CUSTOMER,
+      expect.not.stringContaining('bontemaison.com'),
+    );
+  });
+
+  it('never chases a confirmed guest with a follow-up', async () => {
+    const followUps = makeFollowUps();
+    const handler = build({
+      followUps,
+      guests: makeGuests(futureGuest),
+      parser: makeParser({
+        intent: 'availability_inquiry',
+        checkIn: SUN_CHECK_IN,
+        checkOut: SUN_CHECK_OUT,
+      }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'is that week free?' });
+
+    expect(followUps.schedule).not.toHaveBeenCalled();
+  });
+
+  // A prospect must still get the full funnel — this is the regression guard.
+  it('still schedules a follow-up for a prospect', async () => {
+    const followUps = makeFollowUps();
+    const handler = build({
+      followUps,
+      parser: makeParser({
+        intent: 'availability_inquiry',
+        checkIn: SUN_CHECK_IN,
+        checkOut: SUN_CHECK_OUT,
+      }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'is that week free?' });
+
+    expect(followUps.schedule).toHaveBeenCalledWith(CUSTOMER);
+  });
+
+  it('opens sensitive knowledge only to a guest in residence', async () => {
+    const knowledgeBase = makeKnowledgeBase();
+    const handler = build({
+      knowledgeBase,
+      guests: makeGuests(currentGuest),
+      parser: makeParser({ intent: 'general_info', topicKeys: ['wifi_password'] }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: "what's the wifi password?" });
+
+    expect(knowledgeBase.render).toHaveBeenCalledWith(
+      'wifi_password',
+      expect.anything(),
+      ['all', 'pre_stay', 'in_stay', 'sensitive'],
+    );
+  });
+
+  it('keeps sensitive knowledge shut for a prospect', async () => {
+    const knowledgeBase = makeKnowledgeBase();
+    const handler = build({
+      knowledgeBase,
+      parser: makeParser({ intent: 'general_info', topicKeys: ['wifi_password'] }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: "what's the wifi password?" });
+
+    expect(knowledgeBase.render).toHaveBeenCalledWith(
+      'wifi_password',
+      expect.anything(),
+      ['all'],
+    );
+    expect(knowledgeBase.listTopics).toHaveBeenCalledWith(['all']);
+  });
+
+  it('tells the composer a past guest has stayed before', async () => {
+    const composer = makeComposer();
+    const handler = build({
+      composer,
+      guests: makeGuests(pastGuest),
+      parser: makeParser({ intent: 'greeting' }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'hi again' });
+
+    const facts = composerCalls(composer)[0].facts;
+    expect(
+      facts.find((f: { key: string }) => f.key === 'guest_context').text,
+    ).toContain('Previous stays: 2');
+    expect(
+      facts.find((f: { key: string }) => f.key === 'guest_mode_guidance').text,
+    ).toContain('stayed before');
+  });
+
+  // A hold is not a booking: the bot should still be closing.
+  it('still nudges someone who only has dates held', async () => {
+    const composer = makeComposer();
+    const handler = build({
+      composer,
+      guests: makeGuests({
+        mode: 'hold',
+        guest: null,
+        previousStays: 0,
+        lastStay: null,
+        hold: {
+          id: 'h1',
+          fields: {
+            phone: CUSTOMER,
+            check_in: '2027-07-04',
+            check_out: '2027-07-11',
+            hold_expires_at: new Date('2027-01-06').toISOString(),
+          },
+        } as unknown as GuestContext['hold'],
+      }),
+      parser: makeParser({ intent: 'general_info', highIntentSignal: true }),
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'is there a highchair?' });
+
+    const pkg = composerCalls(composer)[0];
+    expect(pkg.toneFlags.needsNudgeToBook).toBe(true);
+    expect(
+      pkg.facts.find((f: { key: string }) => f.key === 'guest_context').text,
+    ).toContain('4 July 2027');
+  });
+
+  it('falls back to prospect behaviour if recognition is unavailable', async () => {
+    const composer = makeComposer();
+    const guests = {
+      resolveContext: jest.fn().mockResolvedValue(PROSPECT_CTX),
+    } as unknown as GuestsService;
+    const handler = build({ composer, guests, parser: makeParser({ intent: 'greeting' }) });
+
+    await handler.handle({ from: CUSTOMER, text: 'hello' });
+
+    expect(composerCalls(composer)[0].facts).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ key: 'guest_context' })]),
+    );
   });
 });

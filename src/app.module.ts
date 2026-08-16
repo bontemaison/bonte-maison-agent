@@ -8,6 +8,7 @@ import { ConversationModule } from './conversation/conversation.module';
 import { EmailIntegrationModule } from './email-integration/email-integration.module';
 import { FollowUpsModule } from './follow-ups/follow-ups.module';
 import { FragmentsModule } from './fragments/fragments.module';
+import { GuestsModule } from './guests/guests.module';
 import { HelpersModule } from './helpers/helpers.module';
 import { HoldsModule } from './holds/holds.module';
 import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
@@ -38,6 +39,7 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
     MessageLogModule,
     WhatsappModule,
     HoldsModule,
+    GuestsModule,
     FollowUpsModule,
     NotificationsModule,
     EmailIntegrationModule,

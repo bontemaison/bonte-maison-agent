@@ -1,6 +1,6 @@
 /**
- * Send every owner-notification variant to a single phone number as WATI
- * session messages (sendMessage), so Jim (or whoever owns OWNER_PHONE)
+ * Send every owner-notification variant to a single phone number as session
+ * messages (sendMessage), so Jim (or whoever owns OWNER_PHONE)
  * can preview the wording end-to-end without burning HSM template billing.
  *
  * IMPORTANT — session-message window:

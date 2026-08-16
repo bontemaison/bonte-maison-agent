@@ -135,8 +135,7 @@ export class ParserService {
     const apiKey = config.get<string>('ANTHROPIC_API_KEY');
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY must be set');
     this.client = new Anthropic({ apiKey });
-    this.model =
-      config.get<string>('CLAUDE_MODEL') ?? 'claude-haiku-4-5-20251001';
+    this.model = config.get<string>('CLAUDE_MODEL') ?? 'claude-sonnet-5';
   }
 
   async parse(
@@ -152,10 +151,11 @@ export class ParserService {
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: 768,
+        thinking: { type: 'disabled' },
         system,
         messages: [{ role: 'user', content: userContent }],
       });
-      const block = response.content[0];
+      const block = response.content.find((b) => b.type === 'text');
       raw = block && block.type === 'text' ? block.text : '';
     } catch (err) {
       this.logger.error('parser', 'Claude API call failed', {

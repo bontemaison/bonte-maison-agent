@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AirtableModule } from '../airtable/airtable.module';
+import { FollowUpsModule } from '../follow-ups/follow-ups.module';
+import { GuestsModule } from '../guests/guests.module';
 import { LoggerModule } from '../logger/logger.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TemplatesModule } from '../templates/templates.module';
@@ -14,6 +16,8 @@ import { NudgeDispatcherService } from './nudge-dispatcher.service';
     TemplatesModule,
     WhatsappModule,
     NotificationsModule,
+    GuestsModule,
+    FollowUpsModule,
   ],
   providers: [EmailWatcherService, NudgeDispatcherService],
   exports: [EmailWatcherService, NudgeDispatcherService],

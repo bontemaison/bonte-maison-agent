@@ -3,31 +3,48 @@ import {
   Controller,
   ForbiddenException,
   Get,
-  Headers,
   HttpCode,
+  NotFoundException,
+  Param,
   Post,
   Query,
-  Req,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 import { LoggerService } from '../logger/logger.service';
 import { MessageHandlerService } from '../orchestrator/message-handler.service';
 import { WhatsappService } from './whatsapp.service';
 
-type RawRequest = Request & { rawBody?: Buffer };
-
 const DEDUP_TTL_MS = 10 * 60 * 1000;
 const DEDUP_MAX = 1000;
 
-@Controller('webhook')
+// Meta signs inbound webhooks with the BSP's app secret under Dualhook, so
+// HMAC verification is impossible. A secret path segment is the compensating
+// control: it stops scanning, not anyone who has seen the URL.
+@Controller('webhook/:secret')
 export class WebhookController {
   private readonly seen = new Map<string, number>();
+  private readonly pathSecret: string;
 
   constructor(
     private readonly logger: LoggerService,
     private readonly handler: MessageHandlerService,
     private readonly whatsapp: WhatsappService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.pathSecret = config.get<string>('WEBHOOK_PATH_SECRET') ?? '';
+    if (!this.pathSecret) throw new Error('WEBHOOK_PATH_SECRET must be set');
+  }
+
+  // Hashed before comparing so the compare is constant-time over fixed-width
+  // buffers. 404 rather than 403 — a 403 confirms the endpoint is here.
+  private assertSecret(supplied: string): void {
+    const d = (s: string): Buffer => crypto.createHash('sha256').update(s).digest();
+    if (!crypto.timingSafeEqual(d(supplied ?? ''), d(this.pathSecret))) {
+      this.logger.warn('whatsapp', 'webhook path secret mismatch', {});
+      throw new NotFoundException();
+    }
+  }
 
   private isDuplicate(id: string): boolean {
     const now = Date.now();
@@ -46,10 +63,12 @@ export class WebhookController {
 
   @Get()
   verify(
+    @Param('secret') secret: string,
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string,
   ): string {
+    this.assertSecret(secret);
     try {
       return this.whatsapp.verifyWebhook(mode, token, challenge);
     } catch {
@@ -61,38 +80,10 @@ export class WebhookController {
   @Post()
   @HttpCode(200)
   async receive(
-    @Req() req: RawRequest,
-    @Headers('x-hub-signature-256') sig256: string | undefined,
-    @Headers('x-wati-token') watiToken: string | undefined,
+    @Param('secret') secret: string,
     @Body() body: unknown,
   ): Promise<{ status: 'ok' }> {
-    const raw = req.rawBody;
-    if (!raw) {
-      this.logger.warn('whatsapp', 'dropping webhook: no rawBody (middleware misconfigured)', {});
-      return { status: 'ok' };
-    }
-
-    const headers: Record<string, string | undefined> = {
-      'x-hub-signature-256': sig256,
-      'x-wati-token': watiToken,
-    };
-
-    if (!this.whatsapp.validateWebhookSignature(raw, headers)) {
-      const debug = this.whatsapp.debugSignature(raw, headers);
-      this.logger.warn('whatsapp', 'dropping webhook: invalid signature', {
-        hasSignature: Boolean(sig256 ?? watiToken),
-        ...(debug ?? {}),
-        // Body preview helps confirm we're hashing what was actually
-        // delivered (e.g. no proxy re-encoding). Trim to keep logs sane.
-        bodyPreview: raw.subarray(0, 200).toString('utf8'),
-        // Full header dump: BSPs sometimes co-sign with a custom header
-        // (e.g. x-dualhook-signature) using a secret they DO share. Surfacing
-        // every header here makes that easy to spot.
-        allHeaders: req.headers,
-      });
-      return { status: 'ok' };
-    }
-
+    this.assertSecret(secret);
     this.logger.debug('whatsapp', 'webhook payload received', { body });
 
     const message = this.whatsapp.parseWebhook(body);
