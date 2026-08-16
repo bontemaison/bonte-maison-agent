@@ -42,11 +42,15 @@ export const SUPERCONTROL_CONFIG = {
 };
 
 // Normalise for tolerant comparison: lowercase, collapse whitespace, unify
-// dash + quote variants. Catches things like double-spaces, em/en-dashes,
-// and curly apostrophes vs straight ones — all common when email subjects
-// pass through different editors.
+// dash + quote variants, strip accents. Catches things like double-spaces,
+// em/en-dashes, curly apostrophes vs straight ones, and "Bonté" vs "Bonte" —
+// real SuperControl deliveries (and mail clients re-saving them) have been
+// seen with the accent silently dropped, and an unfolded comparison drops
+// the whole email as unmatched.
 function normalize(s: string): string {
   return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // strip combining diacritics (e.g. accented e -> e)
     .toLowerCase()
     .replace(/[‐-―−]/g, '-')   // unicode dashes → '-'
     .replace(/[’‘‛`]/g, "'")    // curly/back single quotes → '

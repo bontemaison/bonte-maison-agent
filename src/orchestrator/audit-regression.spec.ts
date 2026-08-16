@@ -111,6 +111,7 @@ const buildHandler = (w: Wires = {}): MessageHandlerService => {
       findClosestAvailableWeek: jest.fn().mockResolvedValue(null),
       monthAvailabilitySummary: jest.fn().mockResolvedValue([]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService);
@@ -140,7 +141,6 @@ const buildHandler = (w: Wires = {}): MessageHandlerService => {
     w.bookingRules ??
     ({
       validate: jest.fn().mockResolvedValue({ pass: true }),
-      isYearFullyBooked: jest.fn().mockResolvedValue(false),
       isInstantBookEnabled: jest.fn().mockResolvedValue(false),
     } as unknown as BookingRulesService);
   const holds =
@@ -430,7 +430,7 @@ describe('audit regression — bot conversation problems', () => {
     expect(pkg.isFirstMessage).toBe(false);
   });
 
-  it('2026 month query short-circuits to year_2026_redirect (full year booked)', async () => {
+  it('month query with nothing free in the asked month falls back to real nearby alternatives', async () => {
     const parser = {
       parse: jest.fn().mockResolvedValue(
         baseParsed({
@@ -439,51 +439,42 @@ describe('audit regression — bot conversation problems', () => {
         }),
       ),
     } as unknown as ParserService;
-    const bookingRules = {
-      validate: jest.fn().mockResolvedValue({ pass: true }),
-      isYearFullyBooked: jest
-        .fn()
-        .mockImplementation(async (y: number) => y === 2026),
-      isInstantBookEnabled: jest.fn().mockResolvedValue(false),
-    } as unknown as BookingRulesService;
     const helpers = {
       findClosestAvailableWeek: jest.fn().mockResolvedValue(null),
       monthAvailabilitySummary: jest.fn().mockResolvedValue([]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearbyAvailabilitySummary: jest.fn().mockResolvedValue([
+        {
+          checkIn: new Date('2026-10-04'),
+          checkOut: new Date('2026-10-11'),
+          total: 2495,
+          weeklyRate: 2495,
+          usedBase: false,
+        },
+      ]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;
     const composer = {
-      compose: jest.fn(),
+      compose: jest.fn().mockResolvedValue({ ok: true, text: 'alternatives' }),
     } as unknown as ComposerService;
-    const templates = {
-      render: jest.fn().mockResolvedValue('rendered'),
-      fetchRaw: jest.fn().mockResolvedValue([]),
-    } as unknown as TemplatesService;
-    const handler = buildHandler({
-      parser,
-      bookingRules,
-      helpers,
-      composer,
-      templates,
-    });
+    const handler = buildHandler({ parser, helpers, composer });
 
     await handler.handle({
       from: CUSTOMER,
       text: "i'd like to rent the house around september",
     });
 
-    expect(templates.render).toHaveBeenCalledWith(
-      'year_2026_redirect',
-      expect.any(Object),
-    );
-    // The iCal is consulted first — the redirect only fires because the
-    // summary came back empty (the flag alone is not trusted).
     expect(helpers.monthAvailabilitySummary).toHaveBeenCalledWith(2026, 9);
-    expect(composer.compose).not.toHaveBeenCalled();
+    expect(helpers.nearbyAvailabilitySummary).toHaveBeenCalled();
+    const pkg = (composer.compose as jest.Mock).mock.calls[0][0];
+    const altFact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'nearby_alternatives',
+    );
+    expect(altFact.text).toContain('4 October');
   });
 
-  it('2026 month query lists weeks from iCal even when the year flag is stale', async () => {
+  it('2026 month query lists weeks from iCal when some are free', async () => {
     const parser = {
       parse: jest.fn().mockResolvedValue(
         baseParsed({
@@ -492,13 +483,6 @@ describe('audit regression — bot conversation problems', () => {
         }),
       ),
     } as unknown as ParserService;
-    const bookingRules = {
-      validate: jest.fn().mockResolvedValue({ pass: true }),
-      isYearFullyBooked: jest
-        .fn()
-        .mockImplementation(async (y: number) => y === 2026),
-      isInstantBookEnabled: jest.fn().mockResolvedValue(false),
-    } as unknown as BookingRulesService;
     const helpers = {
       findClosestAvailableWeek: jest.fn().mockResolvedValue(null),
       monthAvailabilitySummary: jest.fn().mockResolvedValue([
@@ -511,33 +495,20 @@ describe('audit regression — bot conversation problems', () => {
         },
       ]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;
     const composer = {
       compose: jest.fn().mockResolvedValue({ ok: true, text: 'weeks list' }),
     } as unknown as ComposerService;
-    const templates = {
-      render: jest.fn().mockResolvedValue('rendered'),
-      fetchRaw: jest.fn().mockResolvedValue([]),
-    } as unknown as TemplatesService;
-    const handler = buildHandler({
-      parser,
-      bookingRules,
-      helpers,
-      composer,
-      templates,
-    });
+    const handler = buildHandler({ parser, helpers, composer });
 
     await handler.handle({
       from: CUSTOMER,
       text: 'what weeks are available in september?',
     });
 
-    expect(templates.render).not.toHaveBeenCalledWith(
-      'year_2026_redirect',
-      expect.any(Object),
-    );
     const pkg = (composer.compose as jest.Mock).mock.calls[0][0];
     const weeksFact = pkg.facts.find(
       (f: { key: string }) => f.key === 'available_weeks',
@@ -565,6 +536,7 @@ describe('audit regression — bot conversation problems', () => {
         },
       ]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;
@@ -641,6 +613,7 @@ describe('audit regression — bot conversation problems', () => {
         },
       ]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;

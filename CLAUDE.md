@@ -458,13 +458,6 @@ Simple key-value config for rules that change:
 - `active`
 
 Recognised keys:
-- `year_2026_fully_booked` (`"true"` / `"false"`) — when `true`, 2026 dates
-  trigger the redirect template — but only when the iCal agrees. Since Jim's
-  2026-07 feedback the calendar wins over a stale flag: if the asked week /
-  month actually shows free weeks in the iCal, the bot lists/quotes them and
-  logs a warning instead of redirecting. Read by `BookingRulesService` on
-  every validation (checked after the date-shape rules, so a redirect result
-  always carries valid Sunday dates).
 - `instant_book_enabled` (`"true"` / `"false"`) — when `true`, booking-
   confirmation replies use the instant-book variant. Read via
   `BookingRulesService.isInstantBookEnabled()`.
@@ -586,8 +579,8 @@ SUPERCONTROL_IMAP_PASS=
 SUPERCONTROL_WEBHOOK_SECRET=
 
 # Feature flags
-# instant_book_enabled and year_2026_fully_booked are stored as rows in the
-# Airtable BookingRules table — no env var, toggle in Airtable.
+# instant_book_enabled is stored as a row in the Airtable BookingRules
+# table — no env var, toggle in Airtable.
 
 # App
 PORT=3000
@@ -651,14 +644,43 @@ Enforced in `booking-rules/` module before pricing/availability:
 1. **Check-in must be Sunday.** If not → suggest nearest Sunday.
 2. **Check-out must be Sunday.** Duration in multiples of 7 (1, 2, or 3 weeks).
 3. **Minimum 7 nights.** Fewer → offer 7-night alternative.
-4. **2026 dates → redirect to 2027.** (Use iCal to suggest actual 2027 availability.)
-5. **Oct–May + long stay (>3 weeks or monthly):** flag manual pricing, do not auto-quote.
-6. **Stay spans two pricing bands:** use the band containing the check-in date. ⚠️ *Assumed, needs client confirmation.*
-7. **Partial dates** ("4/5 days over April 23rd, flexible"): the orchestrator
+4. **Oct–May + long stay (>3 weeks or monthly):** flag manual pricing, do not auto-quote.
+5. **Stay spans two pricing bands:** use the band containing the check-in date. ⚠️ *Assumed, needs client confirmation.*
+6. **Partial dates** ("4/5 days over April 23rd, flexible"): the orchestrator
    resolves the Sunday-to-Sunday week containing the target plus the following
    week, checks both against holds + iCal, and composes from those pre-checked
-   facts (`partial_dates` scenario). The composer never invents dates; if both
-   weeks are reserved the guest is told so and Jim is notified.
+   facts (`partial_dates` scenario). The composer never invents a date not in
+   those facts; if both weeks are reserved, nearby alternatives are offered
+   (see below) and Jim is notified.
+
+There is no year-level "fully booked" flag or redirect anymore — every
+availability check (a specific date range, a month query, or partial dates)
+goes straight to the live iCal. A prior `year_2026_fully_booked` BookingRules
+flag existed for this and was removed 2026-08 per Jim's request: it went
+stale (iCal availability changes but the flag doesn't), and it fired a static
+canned reply instead of real dates.
+
+### Alternative dates when unavailable
+
+Per Jim's 2026-08 request — "it's supposed to offer dates as an alternative,
+I have had to step in again" — every unavailable-dates scenario now surfaces
+real open weeks instead of a bare no:
+
+- **Specific requested dates come back unavailable** (booked in the iCal, or
+  held by another guest) in `handleAvailability` / `handleHoldRequest`:
+  `sendUnavailableWithAlternatives` routes through the composer with a
+  `requested_unavailable` fact plus `nearbyAlternativesFacts` — real priced
+  weeks within `HelpersService.nearbyAvailabilitySummary`'s default
+  two-months-either-side window of the requested check-in. Falls back to the
+  `availability_no_priority` template only if the composer call itself fails.
+- **A month query comes back with nothing in the asked month** (`handleMonthQuery`):
+  same `nearbyAlternativesFacts`, windowed around the first of the asked month.
+- **Partial dates, both checked weeks reserved** (`handlePartialDates`): same
+  fact, windowed around the guest's target date.
+
+If nothing is open in the wider window either, the fact says so plainly — the
+composer is instructed to never invent a date, week, or price that isn't in
+the facts it was given.
 
 ---
 
@@ -671,7 +693,6 @@ Enforced in `booking-rules/` module before pricing/availability:
 - **No `console.log`.** Use LoggerService.
 - **No bypassing AirtableService / WhatsappService.**
 - **No proactive discount offers.** Bot never suggests a discount.
-- **No alternative-date suggestions when unavailable.** Jim handles those.
 - **No sending WhatsApp to unmatched guests** in SuperControl integration.
 - **No overengineering.** Bare minimum first.
 

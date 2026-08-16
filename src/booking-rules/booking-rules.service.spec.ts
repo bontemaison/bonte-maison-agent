@@ -44,36 +44,8 @@ const SUN_2025_11_02 = new Date('2025-11-02'); // Sunday
 const SUN_2025_11_30 = new Date('2025-11-30'); // Sunday (28 nights from Nov 2)
 const MON_2025_07_07 = new Date('2025-07-07'); // Monday
 const SAT_2025_07_12 = new Date('2025-07-12'); // Saturday
-const SUN_2026_07_05 = new Date('2026-07-05'); // Sunday in 2026
-const SUN_2026_07_12 = new Date('2026-07-12'); // Sunday in 2026
 
 describe('BookingRulesService', () => {
-  describe('2026 redirect', () => {
-    it('blocks 2026 dates when year_2026_fully_booked=true', async () => {
-      const svc = makeService({ year_2026_fully_booked: 'true' });
-      const result = await svc.validate(SUN_2026_07_05, SUN_2026_07_12);
-      expect(result).toEqual({ pass: false, reason: 'year_2026_redirect' });
-    });
-
-    it('allows 2026 dates when year_2026_fully_booked=false', async () => {
-      const svc = makeService({ year_2026_fully_booked: 'false' });
-      const result = await svc.validate(SUN_2026_07_05, SUN_2026_07_12);
-      expect(result.pass).toBe(true);
-    });
-
-    it('allows 2026 dates when the flag row is missing', async () => {
-      const svc = makeService();
-      const result = await svc.validate(SUN_2026_07_05, SUN_2026_07_12);
-      expect(result.pass).toBe(true);
-    });
-
-    it('allows 2025 dates regardless of flag', async () => {
-      const svc = makeService({ year_2026_fully_booked: 'true' });
-      const result = await svc.validate(SUN_2025_07_06, SUN_2025_07_13);
-      expect(result.pass).toBe(true);
-    });
-  });
-
   describe('Sunday-to-Sunday validation', () => {
     it('blocks when check-in is not a Sunday and suggests next Sunday pair', async () => {
       const svc = makeService();
@@ -190,27 +162,6 @@ describe('BookingRulesService', () => {
   });
 
   describe('validation order', () => {
-    it('checks Sunday validation before year_2026', async () => {
-      const svc = makeService({ year_2026_fully_booked: 'true' });
-      // Non-Sunday 2026 dates — should get not_sunday, not year_2026_redirect.
-      // Date-shape rules run first so a year_2026_redirect always carries
-      // valid Sunday dates the orchestrator can verify against the iCal.
-      const result = await svc.validate(
-        new Date('2026-07-06'),
-        new Date('2026-07-13'),
-      );
-      if (!result.pass) expect(result.reason).toBe('not_sunday');
-    });
-
-    it('returns year_2026_redirect for valid Sunday weeks in 2026', async () => {
-      const svc = makeService({ year_2026_fully_booked: 'true' });
-      const result = await svc.validate(
-        new Date('2026-07-05'),
-        new Date('2026-07-12'),
-      );
-      if (!result.pass) expect(result.reason).toBe('year_2026_redirect');
-    });
-
     it('checks Sunday before min_stay', async () => {
       const svc = makeService();
       // Monday-to-Tuesday (not Sunday, also < 7 nights) — should get not_sunday
@@ -219,23 +170,6 @@ describe('BookingRulesService', () => {
         new Date('2025-07-08'),
       );
       if (!result.pass) expect(result.reason).toBe('not_sunday');
-    });
-  });
-
-  describe('isYearFullyBooked', () => {
-    it('returns true for 2026 when flag is true', async () => {
-      const svc = makeService({ year_2026_fully_booked: 'true' });
-      expect(await svc.isYearFullyBooked(2026)).toBe(true);
-    });
-
-    it('returns false for 2026 when flag is false', async () => {
-      const svc = makeService({ year_2026_fully_booked: 'false' });
-      expect(await svc.isYearFullyBooked(2026)).toBe(false);
-    });
-
-    it('returns false for other years regardless of flag', async () => {
-      const svc = makeService({ year_2026_fully_booked: 'true' });
-      expect(await svc.isYearFullyBooked(2027)).toBe(false);
     });
   });
 

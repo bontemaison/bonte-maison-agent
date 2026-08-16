@@ -114,6 +114,7 @@ const makeHelpers = (): HelpersService =>
     findClosestAvailableWeek: jest.fn().mockResolvedValue(null),
     monthAvailabilitySummary: jest.fn().mockResolvedValue([]),
     multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
+    nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
     getPricingForDateRange: jest.fn().mockResolvedValue(null),
     checkExistingHold: jest.fn().mockResolvedValue(null),
   }) as unknown as HelpersService;
@@ -499,15 +500,50 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
     );
   });
 
-  it('renders availability_no_priority when dates are taken', async () => {
+  it('composes an unavailable reply with nearby alternatives when dates are taken', async () => {
     const parser = makeParser({
       intent: 'availability_inquiry',
       checkIn: SUN_CHECK_IN,
       checkOut: SUN_CHECK_OUT,
     });
     const availability = makeAvailability(false);
+    const composer = makeComposer();
+    const helpers = makeHelpers();
+    (helpers.nearbyAvailabilitySummary as jest.Mock).mockResolvedValue([
+      {
+        checkIn: new Date('2025-08-03'),
+        checkOut: new Date('2025-08-10'),
+        total: 2100,
+        weeklyRate: 2100,
+        usedBase: false,
+      },
+    ]);
+    const handler = build({ parser, availability, composer, helpers });
+
+    await handler.handle({ from: CUSTOMER, text: 'is Jul 6-13 free?' });
+
+    const pkg = composerCalls(composer)[0];
+    expect(pkg.scenarioHint).toBe('dates_unavailable');
+    const altFact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'nearby_alternatives',
+    );
+    expect(altFact.text).toContain('3 August');
+  });
+
+  it('falls back to availability_no_priority when the composer fails', async () => {
+    const parser = makeParser({
+      intent: 'availability_inquiry',
+      checkIn: SUN_CHECK_IN,
+      checkOut: SUN_CHECK_OUT,
+    });
+    const availability = makeAvailability(false);
+    const composer = makeComposer({
+      ok: false,
+      reason: 'forbidden_term:sold',
+      raw: 'sold',
+    });
     const templates = makeTemplates();
-    const handler = build({ parser, availability, templates });
+    const handler = build({ parser, availability, composer, templates });
 
     await handler.handle({ from: CUSTOMER, text: 'is Jul 6-13 free?' });
 
@@ -593,55 +629,6 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
 });
 
 describe('MessageHandlerService.handle — booking rules', () => {
-  it('renders year_2026_redirect when the year is blocked AND the week is not free in iCal', async () => {
-    const parser = makeParser({
-      intent: 'availability_inquiry',
-      checkIn: SUN_CHECK_IN,
-      checkOut: SUN_CHECK_OUT,
-    });
-    const bookingRules = makeBookingRules({
-      pass: false,
-      reason: 'year_2026_redirect',
-    });
-    const availability = makeAvailability(false);
-    const templates = makeTemplates();
-    const handler = build({ parser, bookingRules, availability, templates });
-
-    await handler.handle({ from: CUSTOMER, text: 'available in 2026?' });
-
-    expect(templates.render).toHaveBeenCalledWith(
-      'year_2026_redirect',
-      expect.any(Object),
-    );
-  });
-
-  it('quotes the week when the year flag is stale but iCal shows it free', async () => {
-    const parser = makeParser({
-      intent: 'availability_inquiry',
-      checkIn: SUN_CHECK_IN,
-      checkOut: SUN_CHECK_OUT,
-    });
-    const bookingRules = makeBookingRules({
-      pass: false,
-      reason: 'year_2026_redirect',
-    });
-    // Default availability mock: the week IS free — the calendar wins over
-    // the stale flag and the guest gets a real quote, not the redirect.
-    const templates = makeTemplates();
-    const handler = build({ parser, bookingRules, templates });
-
-    await handler.handle({ from: CUSTOMER, text: 'available in 2026?' });
-
-    expect(templates.render).toHaveBeenCalledWith(
-      'availability_yes_quote',
-      expect.any(Object),
-    );
-    expect(templates.render).not.toHaveBeenCalledWith(
-      'year_2026_redirect',
-      expect.any(Object),
-    );
-  });
-
   it('hands off via long_stay_manual_pricing on Oct-May long stay', async () => {
     const parser = makeParser({
       intent: 'availability_inquiry',
@@ -1063,12 +1050,17 @@ describe('MessageHandlerService.handle — hold flows', () => {
     });
     const holds = makeHolds(true);
     const availability = makeAvailability(true);
-    const templates = makeTemplates();
-    const handler = build({ parser, holds, availability, templates });
+    const composer = makeComposer();
+    const handler = build({ parser, holds, availability, composer });
 
     await handler.handle({ from: CUSTOMER, text: 'are those dates free?' });
 
-    expect(templateCalls(templates)).toContain('availability_no_priority');
+    const pkg = composerCalls(composer)[0];
+    expect(pkg.scenarioHint).toBe('dates_unavailable');
+    const unavailableFact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'requested_unavailable',
+    );
+    expect(unavailableFact.text).toContain('held for another guest');
     expect(availability.isRangeAvailable).not.toHaveBeenCalled();
   });
 

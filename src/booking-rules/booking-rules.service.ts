@@ -11,7 +11,6 @@ const MAX_STANDARD_NIGHTS = 21;
 // Months that trigger manual pricing for long stays: Oct(9) through May(4)
 const LONG_STAY_MONTHS = new Set([9, 10, 11, 0, 1, 2, 3, 4]);
 
-const YEAR_2026_FULLY_BOOKED_KEY = 'year_2026_fully_booked';
 const INSTANT_BOOK_ENABLED_KEY = 'instant_book_enabled';
 const OWNER_NOTIFY_PHONE_ENABLED_KEY = 'owner_notify_phone_enabled';
 const OWNER_NOTIFY_EMAIL_ENABLED_KEY = 'owner_notify_email_enabled';
@@ -26,7 +25,6 @@ type BookingRulesFields = {
 
 export type RulesValidation =
   | { pass: true }
-  | { pass: false; reason: 'year_2026_redirect' }
   | {
       pass: false;
       reason: 'not_sunday';
@@ -85,28 +83,7 @@ export class BookingRulesService {
       return { pass: false, reason: 'long_stay_manual' };
     }
 
-    // Checked LAST, after the date-shape rules, so a year_2026_redirect
-    // result always carries valid Sunday-to-Sunday dates. The orchestrator
-    // uses that to double-check the flag against the live iCal (the flag can
-    // go stale when a cancellation reopens weeks) and fall through to a real
-    // quote when the calendar disagrees.
-    if (
-      checkIn.getUTCFullYear() === 2026 &&
-      (await this.getBooleanFlag(YEAR_2026_FULLY_BOOKED_KEY))
-    ) {
-      return { pass: false, reason: 'year_2026_redirect' };
-    }
-
     return { pass: true };
-  }
-
-  /**
-   * True when the bot should refuse a month-level query because the year is
-   * fully booked. Used by the month-query path which has no concrete dates.
-   */
-  async isYearFullyBooked(year: number): Promise<boolean> {
-    if (year !== 2026) return false;
-    return this.getBooleanFlag(YEAR_2026_FULLY_BOOKED_KEY);
   }
 
   async isInstantBookEnabled(): Promise<boolean> {

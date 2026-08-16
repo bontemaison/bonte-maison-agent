@@ -293,7 +293,7 @@ export class MessageHandlerService {
         parsed.intent === 'availability_inquiry' ||
         parsed.intent === 'polite_close')
     ) {
-      await this.handleAvailability(from, merged, guest);
+      await this.handleAvailability(from, parsed, merged, history, guest);
       return;
     }
 
@@ -305,7 +305,7 @@ export class MessageHandlerService {
     switch (intent) {
       case 'greeting':
         if (merged.checkIn && merged.checkOut) {
-          await this.handleAvailability(from, merged, guest);
+          await this.handleAvailability(from, parsed, merged, history, guest);
           return;
         }
         await this.composeOrFallback(from, parsed, merged, history, guest, {
@@ -351,7 +351,7 @@ export class MessageHandlerService {
           });
           return;
         }
-        await this.handleAvailability(from, merged, guest);
+        await this.handleAvailability(from, parsed, merged, history, guest);
         return;
 
       case 'general_info':
@@ -378,7 +378,7 @@ export class MessageHandlerService {
       }
 
       case 'hold_request':
-        await this.handleHoldRequest(from, merged);
+        await this.handleHoldRequest(from, parsed, merged, history, guest);
         return;
 
       case 'human_request':
@@ -442,7 +442,9 @@ export class MessageHandlerService {
 
   private async handleAvailability(
     from: string,
+    parsed: ParseResult,
     merged: MergedIntent,
+    history: HistoryMessage[],
     guest: GuestContext = PROSPECT_CONTEXT,
   ): Promise<void> {
     if (!merged.checkIn || !merged.checkOut) return;
@@ -454,26 +456,6 @@ export class MessageHandlerService {
     );
     if (!rule.pass) {
       switch (rule.reason) {
-        case 'year_2026_redirect': {
-          // The 2026 flag can go stale (a cancellation reopens weeks). The
-          // calendar is the truth: redirect only when the requested week
-          // isn't actually free, otherwise fall through and quote it.
-          if (
-            !(await this.isWeekActuallyFree(merged.checkIn, merged.checkOut))
-          ) {
-            await this.sendTemplate(from, 'year_2026_redirect', {
-              name,
-              month_phrase: this.monthPhraseForDate(merged.checkIn),
-            });
-            return;
-          }
-          this.logger.warn(
-            'booking-rules',
-            'year flagged fully booked but requested week is free in iCal — quoting it',
-            { from, checkIn: this.isoDate(merged.checkIn) },
-          );
-          break;
-        }
         case 'not_sunday':
           await this.sendTemplate(from, 'dates_not_sunday_to_sunday', {
             name,
@@ -525,18 +507,14 @@ export class MessageHandlerService {
     const datesLabel = `${this.isoDate(merged.checkIn)} → ${this.isoDate(merged.checkOut)}`;
 
     if (!icalOk) {
-      await this.sendTemplate(from, 'availability_no_priority', {
-        name,
-        name_comma: name ? `, ${name}` : '',
-        check_in: this.formatDate(merged.checkIn),
-        check_out: this.formatDate(merged.checkOut),
-        month: this.monthName(merged.checkIn),
-      });
-      await this.recordQuoteSafe(from, datesLabel, 0, 'unavailable');
-      await this.notifications.notifyOwnerAboutConversation(
+      await this.sendUnavailableWithAlternatives(
         from,
-        held ? 'hold_conflict' : 'dates_unavailable',
-        { intent: 'availability_inquiry', extra: { held } },
+        parsed,
+        merged,
+        history,
+        guest,
+        held,
+        'availability_inquiry',
       );
       return;
     }
@@ -603,7 +581,10 @@ export class MessageHandlerService {
 
   private async handleHoldRequest(
     from: string,
+    parsed: ParseResult,
     merged: MergedIntent,
+    history: HistoryMessage[],
+    guest: GuestContext = PROSPECT_CONTEXT,
   ): Promise<void> {
     const name = merged.customerName ?? '';
 
@@ -618,19 +599,6 @@ export class MessageHandlerService {
     );
     if (!rule.pass) {
       switch (rule.reason) {
-        case 'year_2026_redirect': {
-          // Same stale-flag guard as handleAvailability: iCal wins.
-          if (
-            !(await this.isWeekActuallyFree(merged.checkIn, merged.checkOut))
-          ) {
-            await this.sendTemplate(from, 'year_2026_redirect', {
-              name,
-              month_phrase: this.monthPhraseForDate(merged.checkIn),
-            });
-            return;
-          }
-          break;
-        }
         case 'not_sunday':
           await this.sendTemplate(from, 'dates_not_sunday_to_sunday', {
             name,
@@ -680,19 +648,14 @@ export class MessageHandlerService {
         );
 
     if (!icalOk) {
-      const datesLabel = `${this.isoDate(merged.checkIn)} → ${this.isoDate(merged.checkOut)}`;
-      await this.sendTemplate(from, 'availability_no_priority', {
-        name,
-        name_comma: name ? `, ${name}` : '',
-        check_in: this.formatDate(merged.checkIn),
-        check_out: this.formatDate(merged.checkOut),
-        month: this.monthName(merged.checkIn),
-      });
-      await this.recordQuoteSafe(from, datesLabel, 0, 'unavailable');
-      await this.notifications.notifyOwnerAboutConversation(
+      await this.sendUnavailableWithAlternatives(
         from,
-        held ? 'hold_conflict' : 'dates_unavailable',
-        { intent: 'hold_request', extra: { held } },
+        parsed,
+        merged,
+        history,
+        guest,
+        held,
+        'hold_request',
       );
       return;
     }
@@ -708,6 +671,91 @@ export class MessageHandlerService {
       check_out: this.formatDate(merged.checkOut),
       hold_expiry: this.formatDate(new Date(hold.fields.hold_expires_at)),
     });
+  }
+
+  /**
+   * The requested (or held-by-someone-else) dates aren't available. Jim's
+   * ask: don't just say no, surface real open weeks nearby (a couple of
+   * months either side) in the same reply instead of making him follow up
+   * by hand. Routed through the composer so the alternative list reads
+   * naturally; `availability_no_priority` is still the fallback template if
+   * the composer call fails.
+   */
+  private async sendUnavailableWithAlternatives(
+    from: string,
+    parsed: ParseResult,
+    merged: MergedIntent,
+    history: HistoryMessage[],
+    guest: GuestContext,
+    held: boolean,
+    intent: string,
+  ): Promise<void> {
+    const checkIn = merged.checkIn as Date;
+    const checkOut = merged.checkOut as Date;
+    const name = merged.customerName ?? '';
+    const datesLabel = `${this.isoDate(checkIn)} → ${this.isoDate(checkOut)}`;
+
+    await this.composeOrFallback(from, parsed, merged, history, guest, {
+      scenario: 'dates_unavailable',
+      fallbackKey: 'availability_no_priority',
+      fallbackVars: {
+        name,
+        name_comma: name ? `, ${name}` : '',
+        check_in: this.formatDate(checkIn),
+        check_out: this.formatDate(checkOut),
+        month: this.monthName(checkIn),
+      },
+      extraFacts: [
+        {
+          key: 'requested_unavailable',
+          text: `${this.formatDate(checkIn)} to ${this.formatDate(checkOut)} is ${held ? 'held for another guest' : 'already reserved'}, not available.`,
+        },
+        ...(await this.nearbyAlternativesFacts(checkIn)),
+      ],
+    });
+
+    await this.recordQuoteSafe(from, datesLabel, 0, 'unavailable');
+    await this.notifications.notifyOwnerAboutConversation(
+      from,
+      held ? 'hold_conflict' : 'dates_unavailable',
+      { intent, extra: { held } },
+    );
+  }
+
+  /** Real open Sunday-to-Sunday weeks within a couple of months of `target`,
+   *  formatted as composer facts — the alternatives offered alongside an
+   *  unavailable answer. */
+  private async nearbyAlternativesFacts(
+    target: Date,
+  ): Promise<CompositionFact[]> {
+    const nearby = await this.helpers.nearbyAvailabilitySummary(target);
+    if (nearby.length === 0) {
+      return [
+        {
+          key: 'nearby_alternatives',
+          text: 'No other Sunday-to-Sunday weeks are open in the couple of months either side of that either — say so plainly, do not invent one.',
+        },
+      ];
+    }
+    const facts: CompositionFact[] = [
+      {
+        key: 'nearby_alternatives',
+        text: `Other open Sunday-to-Sunday weeks nearby (a couple of months either side):\n${nearby
+          .map((w) =>
+            w.usedBase
+              ? `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} (rate to be confirmed)`
+              : `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} at ${this.formatPrice(w.total)}`,
+          )
+          .join('\n')}`,
+      },
+    ];
+    if (nearby.some((w) => w.usedBase)) {
+      facts.push({
+        key: 'pricing_pending',
+        text: "Some weeks above show '(rate to be confirmed)' because we haven't finalised rates for that period yet. List those weeks as open, but NEVER state or invent a price for them — say the exact rate will be confirmed and you'll come back with it. Only quote a price for weeks that already show one.",
+      });
+    }
+    return facts;
   }
 
   private async handleGeneralInfo(
@@ -751,24 +799,28 @@ export class MessageHandlerService {
     history: HistoryMessage[],
     guest: GuestContext = PROSPECT_CONTEXT,
   ): Promise<void> {
-    const name = merged.customerName ?? '';
-    const years = this.monthQueryYears(parsed);
-    const yearBlocks = await Promise.all(
-      years.map((y) => this.bookingRules.isYearFullyBooked(y)),
-    );
-    const allBlocked = years.length > 0 && yearBlocks.every(Boolean);
-
     const facts: CompositionFact[] = [];
     let summary: WeekWithPrice[] = [];
     let periodLabel = '';
     let periodPreposition = 'in';
+    let referenceDate: Date | null = null;
     if (parsed.monthQuery) {
+      referenceDate = new Date(
+        Date.UTC(parsed.monthQuery.year, parsed.monthQuery.month - 1, 1),
+      );
       summary = await this.helpers.monthAvailabilitySummary(
         parsed.monthQuery.year,
         parsed.monthQuery.month,
       );
       periodLabel = this.formatMonthYear(parsed.monthQuery);
     } else if (parsed.monthRangeQuery) {
+      referenceDate = new Date(
+        Date.UTC(
+          parsed.monthRangeQuery.start.year,
+          parsed.monthRangeQuery.start.month - 1,
+          1,
+        ),
+      );
       summary = await this.helpers.multiMonthAvailabilitySummary(
         parsed.monthRangeQuery.start,
         parsed.monthRangeQuery.end,
@@ -777,29 +829,16 @@ export class MessageHandlerService {
       periodPreposition = 'across';
     }
 
-    // The year-fully-booked flag can go stale (a cancellation reopens
-    // weeks). The calendar is the truth: only redirect when the iCal really
-    // has nothing to offer for the asked period.
-    if (allBlocked && summary.length === 0) {
-      await this.sendTemplate(from, 'year_2026_redirect', {
-        name,
-        month_phrase: this.monthQueryPhrase(parsed),
-      });
-      return;
-    }
-    if (allBlocked && summary.length > 0) {
-      this.logger.warn(
-        'booking-rules',
-        'year flagged fully booked but iCal shows free weeks — listing from iCal',
-        { from, periodLabel, weeks: summary.length },
-      );
-    }
-
     if (summary.length === 0) {
       facts.push({
         key: 'available_weeks',
         text: `No Sunday-to-Sunday weeks are available ${periodPreposition} ${periodLabel}.`,
       });
+      // Nothing in the asked period — surface real nearby alternatives
+      // instead of leaving it at a bare no, per Jim's request.
+      if (referenceDate) {
+        facts.push(...(await this.nearbyAlternativesFacts(referenceDate)));
+      }
     } else {
       facts.push({
         key: 'available_weeks',
@@ -905,6 +944,7 @@ export class MessageHandlerService {
             `The guest's target date (${this.formatDate(target)}) falls in the first week below. ` +
             `Calendar status for the Sunday-to-Sunday weeks around it, already checked against the live calendar:\n${lines.join('\n')}`,
         },
+        ...(freeWeek ? [] : await this.nearbyAlternativesFacts(target)),
       ],
     });
 
@@ -1030,7 +1070,7 @@ export class MessageHandlerService {
     }));
     if (options.extraFacts) facts.push(...options.extraFacts);
 
-    if (this.touchesSeptember(parsed, merged)) {
+    if (this.touchesSeptember(parsed)) {
       facts.push({
         key: 'season_september',
         text: 'September is the start of the wine harvest in this part of the Dordogne. Vineyards are busy, evenings are usually still warm, and there are local food and wine events around. Mention this once, naturally, where it fits.',
@@ -1646,10 +1686,6 @@ export class MessageHandlerService {
     return `£${Math.round(amount).toLocaleString('en-GB')}`;
   }
 
-  private monthPhraseForDate(d: Date): string {
-    return ` for ${this.monthName(d)}`;
-  }
-
   /**
    * Customer came back asking for availability without specifying dates, but
    * we have dates carried over from a previous turn. Don't silently re-run
@@ -1706,26 +1742,6 @@ export class MessageHandlerService {
     }
   }
 
-  private monthQueryPhrase(parsed: ParseResult): string {
-    if (parsed.monthQuery) {
-      const monthName = new Date(
-        Date.UTC(parsed.monthQuery.year, parsed.monthQuery.month - 1, 1),
-      ).toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' });
-      return ` for ${monthName}`;
-    }
-    if (parsed.monthRangeQuery) {
-      const start = new Date(
-        Date.UTC(
-          parsed.monthRangeQuery.start.year,
-          parsed.monthRangeQuery.start.month - 1,
-          1,
-        ),
-      ).toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' });
-      return ` for ${start}`;
-    }
-    return '';
-  }
-
   private monthName(d: Date): string {
     return d.toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' });
   }
@@ -1741,7 +1757,9 @@ export class MessageHandlerService {
       case 'month_query':
         return "You're presenting availability (or lack of it) for a month or month range. STYLE RULES (tight, punchy, NOT a sales pitch):\n\n1) Open with one short sentence stating what's available, e.g. 'July 2027 has three weeks available right now.'\n2) Then list each available week ON ITS OWN LINE, with a blank line before and after the list. Format: '11 July to 18 July at £4,995.' One week per line. Do NOT chain weeks together in a single sentence with commas or semicolons. Do NOT use bullets or dashes — just plain lines separated by newlines.\n3) After the list, end with a single short question on its own line, e.g. 'Which of those works best for you?' If the guest has signalled interest, you may add one short hold-offer sentence; otherwise skip it.\n\nExample shape:\n\nJuly 2027 has three weeks available right now.\n\n11 July to 18 July at £4,995.\n18 July to 25 July at £4,995.\n25 July to 1 August at £4,995.\n\nWhich of those works best for you? Happy to hold a week for a few days while you have a think.\n\nDrop filler phrases like 'full school holiday feel', 'real atmosphere', 'often still'. Do NOT list weeks for a period the guest didn't ask about.\n\nIf a week is shown as '(rate to be confirmed)' instead of a price, list it on its own line the same way and say the exact rate will be confirmed, but NEVER make up a number for it.";
       case 'partial_dates':
-        return "The guest gave a rough target date or a shorter stay (e.g. '4 or 5 days around the 23rd') rather than exact Sunday-to-Sunday dates. The requested_week_availability fact contains the REAL calendar status for the Sunday-to-Sunday week(s) around their target, already checked. Briefly explain the house books Sunday to Sunday with a one-week minimum, then state the status exactly as the fact gives it: if a week is AVAILABLE with a price, offer it with its dates and price; if the weeks are RESERVED, say those dates are reserved, plainly and warmly, and do NOT suggest or hint at any other dates. Copy dates verbatim from the fact. NEVER write any weekday/date pairing that is not in the fact, and never say you will 'check availability and come back', the calendar has already been checked.";
+        return "The guest gave a rough target date or a shorter stay (e.g. '4 or 5 days around the 23rd') rather than exact Sunday-to-Sunday dates. The requested_week_availability fact contains the REAL calendar status for the Sunday-to-Sunday week(s) around their target, already checked. Briefly explain the house books Sunday to Sunday with a one-week minimum, then state the status exactly as the fact gives it: if a week is AVAILABLE with a price, offer it with its dates and price. If the weeks are RESERVED, say those dates are reserved, plainly and warmly, then weave in the nearby_alternatives fact if one is present (same one-week-per-line format as elsewhere). Copy dates verbatim from the facts. NEVER write any weekday/date pairing that is not in the facts, and never say you will 'check availability and come back', the calendar has already been checked.";
+      case 'dates_unavailable':
+        return "The guest's requested week isn't available. State that plainly and warmly using the requested_unavailable fact — always 'reserved', never 'sold' or 'taken'. Then weave in the nearby_alternatives fact: if it lists real open weeks, offer them, one week per line (same format as an availability listing: 'DD Month to DD Month at £X'), and ask if any of those work. If it says nothing else is open nearby either, say so briefly, don't pad it out. Do NOT invent, imply, or hint at any date, week, or price that isn't in the facts.";
       case 'correction':
         return "The customer is correcting or pushing back on YOUR previous reply. Apologise briefly for the misunderstanding and ask what they'd like to know. Don't escalate.";
       case 'unclear':
@@ -1753,22 +1771,6 @@ export class MessageHandlerService {
       default:
         return null;
     }
-  }
-
-  private monthQueryYears(parsed: ParseResult): number[] {
-    if (parsed.monthQuery) return [parsed.monthQuery.year];
-    if (parsed.monthRangeQuery) {
-      const out = new Set<number>();
-      for (
-        let y = parsed.monthRangeQuery.start.year;
-        y <= parsed.monthRangeQuery.end.year;
-        y++
-      ) {
-        out.add(y);
-      }
-      return Array.from(out);
-    }
-    return [];
   }
 
   private formatMonthYear(m: { year: number; month: number }): string {
@@ -1784,13 +1786,17 @@ export class MessageHandlerService {
     return d.getUTCMonth() === SEPTEMBER;
   }
 
-  private touchesSeptember(parsed: ParseResult, merged: MergedIntent): boolean {
-    if (merged.checkIn && this.isInSeptember(merged.checkIn)) return true;
-    if (merged.checkOut && this.isInSeptember(merged.checkOut)) return true;
+  // Uses parsed (this turn's dates only), not merged (which falls back to
+  // pendingDates carried over from an earlier, possibly unrelated turn) — a
+  // stale pending date range was leaking this fact into replies that never
+  // mentioned dates at all, e.g. a WiFi-password question.
+  private touchesSeptember(parsed: ParseResult): boolean {
+    if (parsed.checkIn && this.isInSeptember(parsed.checkIn)) return true;
+    if (parsed.checkOut && this.isInSeptember(parsed.checkOut)) return true;
     if (
-      merged.checkIn &&
-      merged.checkOut &&
-      this.rangeCoversMonth(merged.checkIn, merged.checkOut, SEPTEMBER + 1)
+      parsed.checkIn &&
+      parsed.checkOut &&
+      this.rangeCoversMonth(parsed.checkIn, parsed.checkOut, SEPTEMBER + 1)
     ) {
       return true;
     }

@@ -4,8 +4,7 @@
  * Usage:
  *   npm run seed:booking-rules
  *
- * Idempotent — only fills in missing rows. Existing values are preserved
- * (so toggled flags like year_2026_fully_booked=true won't be reset).
+ * Idempotent — only fills in missing rows. Existing values are preserved.
  *
  * Airtable table must have fields: key (string), value (string), active (checkbox).
  */
@@ -19,12 +18,6 @@ type BookingRuleRow = {
 };
 
 const ROWS: BookingRuleRow[] = [
-  {
-    key: 'year_2026_fully_booked',
-    value: 'false',
-    active: true,
-    description: 'When true, 2026 enquiries get the redirect-to-2027 template.',
-  },
   {
     key: 'instant_book_enabled',
     value: 'false',

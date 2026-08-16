@@ -84,6 +84,27 @@ export class HelpersService {
     return this.summarizeRange(start, end);
   }
 
+  /**
+   * Free Sunday-to-Sunday weeks within `monthsBefore`/`monthsAfter` calendar
+   * months of `target`, with pricing. Used to offer real alternatives when a
+   * guest's requested dates, or asked-about month, come back unavailable —
+   * Jim's ask is that the bot surface these itself instead of him having to
+   * follow up by hand.
+   */
+  async nearbyAvailabilitySummary(
+    target: Date,
+    monthsBefore = 2,
+    monthsAfter = 2,
+  ): Promise<WeekWithPrice[]> {
+    const start = new Date(
+      Date.UTC(target.getUTCFullYear(), target.getUTCMonth() - monthsBefore, 1),
+    );
+    const end = new Date(
+      Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + monthsAfter + 1, 1),
+    );
+    return this.summarizeRange(start, end);
+  }
+
   async getPricingForDateRange(
     checkIn: Date,
     checkOut: Date,

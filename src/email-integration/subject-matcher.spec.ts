@@ -19,6 +19,17 @@ describe('matchSubject (SuperControl exact subjects)', () => {
     expect(matchSubject('  Your Stay at Bonté   is   Confirmed  ')).toBe('nudge_booking_confirmation');
   });
 
+  it('normalises accents so "Bonte" matches the accented "Bonté" subject', () => {
+    // Real SuperControl deliveries — and mail clients re-saving them as .eml —
+    // have shown up with the accent silently dropped.
+    expect(matchSubject('Your Stay at Bonte is Confirmed')).toBe(
+      'nudge_booking_confirmation',
+    );
+    expect(isBookingRecordEmail('Deposit paid for your holiday at Bonté')).toBe(
+      true,
+    );
+  });
+
   it("normalises unicode dashes so en/em-dashes don't break matching", () => {
     // Jim's subjects use em-dashes; subjects typed with a plain hyphen
     // should still match after normalisation.

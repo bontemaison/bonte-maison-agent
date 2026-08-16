@@ -133,6 +133,52 @@ describe('HelpersService.monthAvailabilitySummary', () => {
   });
 });
 
+describe('HelpersService.nearbyAvailabilitySummary', () => {
+  it('queries a window spanning monthsBefore/monthsAfter around the target', async () => {
+    const availability = makeAvailability([]);
+    const svc = new HelpersService(
+      availability,
+      makePricing({}),
+      makeHolds(),
+      makeLogger(),
+    );
+
+    await svc.nearbyAvailabilitySummary(new Date('2026-09-15'));
+
+    expect(availability.findAvailableSundayWeeks).toHaveBeenCalledWith(
+      new Date(Date.UTC(2026, 6, 1)), // 2 months before September = July
+      new Date(Date.UTC(2026, 11, 1)), // 2 months after September, exclusive = December
+    );
+  });
+
+  it('returns priced weeks from the wider window', async () => {
+    const availability = makeAvailability([
+      { checkIn: '2026-10-04', checkOut: '2026-10-11' },
+    ]);
+    const pricing = makePricing({
+      '2026-10-04': { total: 2495, weeklyRate: 2495, label: 'Low season' },
+    });
+    const svc = new HelpersService(
+      availability,
+      pricing,
+      makeHolds(),
+      makeLogger(),
+    );
+
+    const result = await svc.nearbyAvailabilitySummary(new Date('2026-09-06'));
+
+    expect(result).toEqual([
+      {
+        checkIn: new Date('2026-10-04'),
+        checkOut: new Date('2026-10-11'),
+        total: 2495,
+        weeklyRate: 2495,
+        label: 'Low season',
+      },
+    ]);
+  });
+});
+
 describe('HelpersService.checkExistingHold', () => {
   it('proxies to holds service', async () => {
     const hold = {
