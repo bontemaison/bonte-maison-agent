@@ -678,9 +678,16 @@ real open weeks instead of a bare no:
 - **Partial dates, both checked weeks reserved** (`handlePartialDates`): same
   fact, windowed around the guest's target date.
 
-If nothing is open in the wider window either, the fact says so plainly — the
-composer is instructed to never invent a date, week, or price that isn't in
-the facts it was given.
+If the two-months-either-side window is empty (a fully-booked season — e.g.
+March 2027 with nothing free a couple of months either side), `nearbyAlternativesFacts`
+widens automatically: `HelpersService.nearestAvailableWeeks(target, 2)` searches
+up to a year either side and returns the 2 closest open weeks regardless of
+distance, so a guest almost always gets a real alternative instead of a bare
+no. Only pricing for the selected weeks is looked up, not the whole year. The
+fact text flags these as "further out than usual" so the composer doesn't
+present them as if they were nearby. Only if that wider search also comes back
+empty does the fact say so plainly — the composer is instructed to never
+invent a date, week, or price that isn't in the facts it was given.
 
 ---
 

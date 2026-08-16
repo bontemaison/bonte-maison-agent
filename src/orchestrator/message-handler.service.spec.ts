@@ -115,6 +115,7 @@ const makeHelpers = (): HelpersService =>
     monthAvailabilitySummary: jest.fn().mockResolvedValue([]),
     multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
     nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
+    nearestAvailableWeeks: jest.fn().mockResolvedValue([]),
     getPricingForDateRange: jest.fn().mockResolvedValue(null),
     checkExistingHold: jest.fn().mockResolvedValue(null),
   }) as unknown as HelpersService;
@@ -528,6 +529,38 @@ describe('MessageHandlerService.handle — availability flow (fixed templates)',
       (f: { key: string }) => f.key === 'nearby_alternatives',
     );
     expect(altFact.text).toContain('3 August');
+  });
+
+  it('widens to the nearest open weeks when the couple-of-months window is fully booked', async () => {
+    const parser = makeParser({
+      intent: 'availability_inquiry',
+      checkIn: SUN_CHECK_IN,
+      checkOut: SUN_CHECK_OUT,
+    });
+    const availability = makeAvailability(false);
+    const composer = makeComposer();
+    const helpers = makeHelpers();
+    (helpers.nearbyAvailabilitySummary as jest.Mock).mockResolvedValue([]);
+    (helpers.nearestAvailableWeeks as jest.Mock).mockResolvedValue([
+      {
+        checkIn: new Date('2025-12-07'),
+        checkOut: new Date('2025-12-14'),
+        total: 1800,
+        weeklyRate: 1800,
+        usedBase: false,
+      },
+    ]);
+    const handler = build({ parser, availability, composer, helpers });
+
+    await handler.handle({ from: CUSTOMER, text: 'is Jul 6-13 free?' });
+
+    const pkg = composerCalls(composer)[0];
+    const altFact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'nearby_alternatives',
+    );
+    expect(helpers.nearestAvailableWeeks).toHaveBeenCalled();
+    expect(altFact.text).toContain('7 December');
+    expect(altFact.text).toContain('further out than usual');
   });
 
   it('falls back to availability_no_priority when the composer fails', async () => {

@@ -722,25 +722,37 @@ export class MessageHandlerService {
     );
   }
 
-  /** Real open Sunday-to-Sunday weeks within a couple of months of `target`,
-   *  formatted as composer facts — the alternatives offered alongside an
-   *  unavailable answer. */
+  /** Real open Sunday-to-Sunday weeks near `target`, formatted as composer
+   *  facts — the alternatives offered alongside an unavailable answer.
+   *  Tries the usual couple-of-months window first; if the season is fully
+   *  booked out, widens to the nearest open weeks anywhere within a year
+   *  either side, so an unavailable reply almost always has something real
+   *  to offer instead of a bare no. */
   private async nearbyAlternativesFacts(
     target: Date,
   ): Promise<CompositionFact[]> {
-    const nearby = await this.helpers.nearbyAvailabilitySummary(target);
+    let nearby = await this.helpers.nearbyAvailabilitySummary(target);
+    let widened = false;
+    if (nearby.length === 0) {
+      nearby = await this.helpers.nearestAvailableWeeks(target, 2);
+      widened = true;
+    }
     if (nearby.length === 0) {
       return [
         {
           key: 'nearby_alternatives',
-          text: 'No other Sunday-to-Sunday weeks are open in the couple of months either side of that either — say so plainly, do not invent one.',
+          text: 'No other Sunday-to-Sunday weeks are open anywhere near that either — say so plainly, do not invent one.',
         },
       ];
     }
     const facts: CompositionFact[] = [
       {
         key: 'nearby_alternatives',
-        text: `Other open Sunday-to-Sunday weeks nearby (a couple of months either side):\n${nearby
+        text: `${
+          widened
+            ? "Nothing free in the couple of months either side, but here are the closest open weeks we do have (further out than usual — say so plainly):"
+            : 'Other open Sunday-to-Sunday weeks nearby (a couple of months either side):'
+        }\n${nearby
           .map((w) =>
             w.usedBase
               ? `${this.formatDate(w.checkIn)} to ${this.formatDate(w.checkOut)} (rate to be confirmed)`

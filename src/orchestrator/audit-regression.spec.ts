@@ -112,6 +112,7 @@ const buildHandler = (w: Wires = {}): MessageHandlerService => {
       monthAvailabilitySummary: jest.fn().mockResolvedValue([]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
       nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearestAvailableWeeks: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService);
@@ -452,6 +453,7 @@ describe('audit regression — bot conversation problems', () => {
           usedBase: false,
         },
       ]),
+      nearestAvailableWeeks: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;
@@ -496,6 +498,7 @@ describe('audit regression — bot conversation problems', () => {
       ]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
       nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearestAvailableWeeks: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;
@@ -537,6 +540,7 @@ describe('audit regression — bot conversation problems', () => {
       ]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
       nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearestAvailableWeeks: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;
@@ -614,6 +618,7 @@ describe('audit regression — bot conversation problems', () => {
       ]),
       multiMonthAvailabilitySummary: jest.fn().mockResolvedValue([]),
       nearbyAvailabilitySummary: jest.fn().mockResolvedValue([]),
+      nearestAvailableWeeks: jest.fn().mockResolvedValue([]),
       getPricingForDateRange: jest.fn().mockResolvedValue(null),
       checkExistingHold: jest.fn().mockResolvedValue(null),
     } as unknown as HelpersService;
