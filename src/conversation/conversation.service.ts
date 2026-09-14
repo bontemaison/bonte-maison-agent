@@ -25,6 +25,8 @@ export type ConversationState = {
   lastIntent: string | null;
   pendingDates: PendingDates | null;
   customerName: string | null;
+  /** When this row last moved — a true instant, or null for a new number. */
+  lastActivity: Date | null;
 };
 
 export type CrmSnapshot = {
@@ -82,6 +84,7 @@ const DEFAULT_STATE: ConversationState = {
   lastIntent: null,
   pendingDates: null,
   customerName: null,
+  lastActivity: null,
 };
 
 @Injectable()
@@ -110,7 +113,14 @@ export class ConversationService {
       lastIntent: f.last_intent ?? null,
       pendingDates: this.parsePending(f.pending_dates),
       customerName: f.customer_name ?? null,
+      lastActivity: this.parseInstant(f.last_activity),
     };
+  }
+
+  private parseInstant(value: string | undefined): Date | null {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
   }
 
   async getCrmSnapshot(phone: string): Promise<CrmSnapshot | null> {

@@ -25,6 +25,7 @@
     "seed:pricing": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/seed-pricing.ts",
     "seed:booking-rules": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/seed-booking-rules.ts",
     "backfill:guests": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/backfill-guests.ts",
+    "import:guests-csv": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/import-guests-csv.ts",
     "trigger:follow-ups": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/trigger-follow-ups.ts",
     "trigger:holds": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/trigger-holds.ts",
     "owner:cmd": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/send-owner-command.ts",
@@ -38,7 +39,9 @@
     "test:years": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/run-year-inquiries-test.ts",
     "test:vague": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/run-vague-inquiries-test.ts",
     "watch:imap": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/watch-imap.ts",
-    "test:e2e-nudge": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/test-e2e-nudge.ts"
+    "test:e2e-nudge": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/test-e2e-nudge.ts",
+    "test:e2e-booking-ingest": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env -r ts-node/register scripts/test-e2e-booking-ingest.ts",
+    "repro:reconfirm": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\"}' node --env-file=.env.production -r ts-node/register scripts/repro-pricing-reconfirm.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

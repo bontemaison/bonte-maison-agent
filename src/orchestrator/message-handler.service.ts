@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AvailabilityService } from '../availability/availability.service';
-import { BookingRulesService } from '../booking-rules/booking-rules.service';
+import {
+  BookingRulesService,
+  RulesValidation,
+} from '../booking-rules/booking-rules.service';
 import { parseIsoDate } from '../common/dates';
 import {
   ComposerService,
@@ -41,6 +44,12 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 
 const PAUSE_ON_HANDOFF_MIN = 60;
 const TAKEOVER_WINDOW_MIN = 60;
+
+// A dateless "is it available?" / "how much?" with dates carried over from an
+// earlier turn: within this window it's the same conversation and the pending
+// dates are simply the dates under discussion — answer for them. Only past it
+// (guest coming back days later) do we ask whether they still want those dates.
+const RECONFIRM_AFTER_MS = 24 * 60 * 60 * 1000;
 const HISTORY_LIMIT = 10;
 const SEPTEMBER = 8;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -247,6 +256,7 @@ export class MessageHandlerService {
         history,
         previousIntent,
         guest,
+        this.isStale(state.lastActivity),
       );
     } catch (err) {
       const error = (err as Error).message;
@@ -272,6 +282,7 @@ export class MessageHandlerService {
     history: HistoryMessage[],
     previousIntent: string | null,
     guest: GuestContext,
+    contextIsStale: boolean,
   ): Promise<void> {
     const name = merged.customerName ?? '';
     const isFarewell =
@@ -291,6 +302,7 @@ export class MessageHandlerService {
       (parsed.intent === 'acknowledgment' ||
         parsed.intent === 'booking_confirmation' ||
         parsed.intent === 'availability_inquiry' ||
+        parsed.intent === 'pricing_inquiry' ||
         parsed.intent === 'polite_close')
     ) {
       await this.handleAvailability(from, parsed, merged, history, guest);
@@ -320,12 +332,16 @@ export class MessageHandlerService {
           await this.handleMonthQuery(from, parsed, merged, history, guest);
           return;
         }
-        // Customer asked for availability without giving fresh dates this turn.
-        // If we have dates carried over from a previous turn (pendingDates), don't
-        // silently re-run availability on the old dates — confirm them first so
-        // the customer can either re-affirm ("yes please" → handled by the
-        // awaiting_dates_confirmation guard above) or share new dates.
+        // Customer asked for availability without giving fresh dates this turn,
+        // and we have dates carried over from a previous turn (pendingDates).
+        // If the conversation has gone quiet for a while, don't silently re-run
+        // availability on the old dates — confirm them first so the customer
+        // can either re-affirm ("yes please" → handled by the
+        // awaiting_dates_confirmation guard above) or share new dates. Mid-
+        // conversation the carried-over dates are just the dates being
+        // discussed, so fall through and answer for them.
         if (
+          contextIsStale &&
           !parsed.checkIn &&
           !parsed.checkOut &&
           merged.checkIn &&
@@ -457,35 +473,15 @@ export class MessageHandlerService {
     if (!rule.pass) {
       switch (rule.reason) {
         case 'not_sunday':
-          await this.sendTemplate(from, 'dates_not_sunday_to_sunday', {
-            name,
-            suggested_check_in: this.formatDate(
-              new Date(rule.suggestedCheckIn),
-            ),
-            suggested_check_out: this.formatDate(
-              new Date(rule.suggestedCheckOut),
-            ),
-          });
-          await this.parkSuggestedDates(
-            from,
-            rule.suggestedCheckIn,
-            rule.suggestedCheckOut,
-          );
-          return;
         case 'min_stay':
-          await this.sendTemplate(from, 'minimum_stay_not_met', {
-            name,
-            suggested_check_in: this.formatDate(
-              new Date(rule.suggestedCheckIn),
-            ),
-            suggested_check_out: this.formatDate(
-              new Date(rule.suggestedCheckOut),
-            ),
-          });
-          await this.parkSuggestedDates(
+          await this.suggestRuleCompliantWeek(
             from,
-            rule.suggestedCheckIn,
-            rule.suggestedCheckOut,
+            parsed,
+            merged,
+            history,
+            guest,
+            rule,
+            'availability_inquiry',
           );
           return;
         case 'long_stay_manual':
@@ -600,35 +596,15 @@ export class MessageHandlerService {
     if (!rule.pass) {
       switch (rule.reason) {
         case 'not_sunday':
-          await this.sendTemplate(from, 'dates_not_sunday_to_sunday', {
-            name,
-            suggested_check_in: this.formatDate(
-              new Date(rule.suggestedCheckIn),
-            ),
-            suggested_check_out: this.formatDate(
-              new Date(rule.suggestedCheckOut),
-            ),
-          });
-          await this.parkSuggestedDates(
-            from,
-            rule.suggestedCheckIn,
-            rule.suggestedCheckOut,
-          );
-          return;
         case 'min_stay':
-          await this.sendTemplate(from, 'minimum_stay_not_met', {
-            name,
-            suggested_check_in: this.formatDate(
-              new Date(rule.suggestedCheckIn),
-            ),
-            suggested_check_out: this.formatDate(
-              new Date(rule.suggestedCheckOut),
-            ),
-          });
-          await this.parkSuggestedDates(
+          await this.suggestRuleCompliantWeek(
             from,
-            rule.suggestedCheckIn,
-            rule.suggestedCheckOut,
+            parsed,
+            merged,
+            history,
+            guest,
+            rule,
+            'hold_request',
           );
           return;
         case 'long_stay_manual':
@@ -674,6 +650,73 @@ export class MessageHandlerService {
   }
 
   /**
+   * The guest's dates broke a booking rule (not Sunday-to-Sunday, or under
+   * the 7-night minimum) and the rule snapped them to the nearest compliant
+   * week. Check that week against holds + iCal *before* proposing it: on
+   * 2026-09-14 the bot suggested 30 May–6 Jun, the guest said yes, and only
+   * then was told it was reserved. If the snapped week is gone, say so and
+   * offer real open weeks in the same reply instead.
+   */
+  private async suggestRuleCompliantWeek(
+    from: string,
+    parsed: ParseResult,
+    merged: MergedIntent,
+    history: HistoryMessage[],
+    guest: GuestContext,
+    rule: Extract<RulesValidation, { reason: 'not_sunday' | 'min_stay' }>,
+    intent: 'availability_inquiry' | 'hold_request',
+  ): Promise<void> {
+    const name = merged.customerName ?? '';
+    const checkIn = parseIsoDate(rule.suggestedCheckIn);
+    const checkOut = parseIsoDate(rule.suggestedCheckOut);
+
+    const held = await this.holds.hasOverlap(checkIn, checkOut);
+    const open = held
+      ? false
+      : await this.availability.isRangeAvailable(checkIn, checkOut);
+
+    if (open) {
+      await this.sendTemplate(
+        from,
+        rule.reason === 'not_sunday'
+          ? 'dates_not_sunday_to_sunday'
+          : 'minimum_stay_not_met',
+        {
+          name,
+          suggested_check_in: this.formatDate(checkIn),
+          suggested_check_out: this.formatDate(checkOut),
+        },
+      );
+      await this.parkSuggestedDates(
+        from,
+        rule.suggestedCheckIn,
+        rule.suggestedCheckOut,
+      );
+      return;
+    }
+
+    const asked =
+      merged.checkIn && merged.checkOut
+        ? `${this.formatDate(merged.checkIn)} to ${this.formatDate(merged.checkOut)}`
+        : 'those dates';
+    const ruleText =
+      rule.reason === 'not_sunday'
+        ? `The guest asked for ${asked}, which isn't Sunday to Sunday. Bonté Maison is let Sunday to Sunday only, so the nearest matching week would have been ${this.formatDate(checkIn)} to ${this.formatDate(checkOut)}. Mention the Sunday-to-Sunday rule briefly before saying that week is reserved.`
+        : `The guest asked for ${asked}, which is under the 7 nights minimum. Stays are one-week blocks, Sunday to Sunday, so the nearest matching week would have been ${this.formatDate(checkIn)} to ${this.formatDate(checkOut)}. Mention the 7 nights minimum briefly before saying that week is reserved.`;
+
+    await this.sendUnavailableWithAlternatives(
+      from,
+      parsed,
+      { ...merged, checkIn, checkOut },
+      history,
+      guest,
+      held,
+      intent,
+      [{ key: 'booking_rule', text: ruleText }],
+    );
+  }
+
+  /**
    * The requested (or held-by-someone-else) dates aren't available. Jim's
    * ask: don't just say no, surface real open weeks nearby (a couple of
    * months either side) in the same reply instead of making him follow up
@@ -689,6 +732,7 @@ export class MessageHandlerService {
     guest: GuestContext,
     held: boolean,
     intent: string,
+    extraFacts: CompositionFact[] = [],
   ): Promise<void> {
     const checkIn = merged.checkIn as Date;
     const checkOut = merged.checkOut as Date;
@@ -706,6 +750,7 @@ export class MessageHandlerService {
         month: this.monthName(checkIn),
       },
       extraFacts: [
+        ...extraFacts,
         {
           key: 'requested_unavailable',
           text: `${this.formatDate(checkIn)} to ${this.formatDate(checkOut)} is ${held ? 'held for another guest' : 'already reserved'}, not available.`,
@@ -750,7 +795,7 @@ export class MessageHandlerService {
         key: 'nearby_alternatives',
         text: `${
           widened
-            ? "Nothing free in the couple of months either side, but here are the closest open weeks we do have (further out than usual — say so plainly):"
+            ? 'Nothing free in the couple of months either side, but here are the closest open weeks we do have (further out than usual — say so plainly):'
             : 'Other open Sunday-to-Sunday weeks nearby (a couple of months either side):'
         }\n${nearby
           .map((w) =>
@@ -1235,7 +1280,9 @@ export class MessageHandlerService {
       );
     }
     if (typeof g.dogs === 'number' && g.dogs > 0) {
-      lines.push(`They travel with ${g.dogs === 1 ? 'a dog' : `${g.dogs} dogs`}.`);
+      lines.push(
+        `They travel with ${g.dogs === 1 ? 'a dog' : `${g.dogs} dogs`}.`,
+      );
     }
     if (g.cot_or_highchair) {
       lines.push('A cot or highchair has been used on a previous stay.');
@@ -1265,13 +1312,13 @@ export class MessageHandlerService {
   private modeGuidance(mode: GuestMode): string | null {
     switch (mode) {
       case 'hold':
-        return "These dates are already held for this person, so stop selling the house and help them over the line. Answer what they ask, and if it fits naturally, one short line about confirming while the hold lasts. Do not re-pitch the property and do not repeat the full description.";
+        return 'These dates are already held for this person, so stop selling the house and help them over the line. Answer what they ask, and if it fits naturally, one short line about confirming while the hold lasts. Do not re-pitch the property and do not repeat the full description.';
       case 'future_guest':
         return "This is a confirmed guest counting down to their stay, NOT a prospect. Never pitch the house, never quote a price, never offer to hold dates, never send a booking link, and never suggest they book. Answer their pre-arrival question directly and warmly, and reference their arrival date where it genuinely helps. If you have no fact for what they asked, say you'll come back with it rather than guessing.";
       case 'current_guest':
         return "This guest is at the house right now. You are the host checking in, not a booking agent. Answer the practical question directly and briefly. Never pitch, never quote, never mention booking or the website. If the question is about something broken or urgent, say you'll deal with it personally rather than offering instructions you don't have.";
       case 'past_guest':
-        return "This person has stayed before. Acknowledge that once, warmly and briefly, if it fits naturally, then answer what they actually asked. Do not list what you remember about them and do not make the acknowledgement the whole reply. If they are asking about new dates, treat that part exactly as you would any enquiry.";
+        return 'This person has stayed before. Acknowledge that once, warmly and briefly, if it fits naturally, then answer what they actually asked. Do not list what you remember about them and do not make the acknowledgement the whole reply. If they are asking about new dates, treat that part exactly as you would any enquiry.';
       default:
         return null;
     }
@@ -1665,6 +1712,11 @@ export class MessageHandlerService {
       checkOut: merged.checkOut ? this.isoDate(merged.checkOut) : null,
       guests: merged.guests,
     };
+  }
+
+  private isStale(lastActivity: Date | null): boolean {
+    if (!lastActivity) return false;
+    return Date.now() - lastActivity.getTime() > RECONFIRM_AFTER_MS;
   }
 
   private parseIso(value: string): Date | null {
