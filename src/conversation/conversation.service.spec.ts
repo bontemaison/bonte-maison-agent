@@ -176,7 +176,24 @@ describe('ConversationService.getState', () => {
       lastIntent: null,
       pendingDates: null,
       customerName: null,
+      lastActivity: null,
     });
+  });
+
+  it('reads last_activity as an instant', async () => {
+    const airtable = makeAirtable({
+      list: jest.fn().mockResolvedValue([
+        {
+          id: 'r',
+          fields: { phone: '62812', last_activity: '2026-09-14T18:09:00.000Z' },
+        },
+      ]),
+    });
+    const service = new ConversationService(airtable, makeLogger());
+
+    const state = await service.getState('62812');
+
+    expect(state.lastActivity).toEqual(new Date('2026-09-14T18:09:00.000Z'));
   });
 
   it('reads lastIntent, pendingDates (JSON), and customerName', async () => {

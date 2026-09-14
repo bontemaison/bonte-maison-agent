@@ -682,6 +682,190 @@ describe('MessageHandlerService.handle — booking rules', () => {
       expect.any(Object),
     );
   });
+
+  // 2026-09-14: a Sat→Tue ask (29/5–1/6) was snapped to Sun 30 May–6 Jun and
+  // suggested without looking at the calendar; that week was already booked,
+  // so the next turn had to walk it back. The snapped week must be checked
+  // before it is offered.
+  const NOT_SUNDAY_RULE: RulesValidation = {
+    pass: false,
+    reason: 'not_sunday',
+    suggestedCheckIn: '2027-05-30',
+    suggestedCheckOut: '2027-06-06',
+  };
+  const MIN_STAY_RULE: RulesValidation = {
+    pass: false,
+    reason: 'min_stay',
+    suggestedCheckIn: '2027-05-30',
+    suggestedCheckOut: '2027-06-06',
+  };
+  const offSunday = (intent: ParseResult['intent'] = 'availability_inquiry') =>
+    makeParser({
+      intent,
+      checkIn: new Date('2027-05-29'),
+      checkOut: new Date('2027-06-01'),
+    });
+
+  it('suggests the snapped Sunday week when the calendar shows it open', async () => {
+    const availability = makeAvailability(true);
+    const templates = makeTemplates();
+    const conversation = makeConversation();
+    const handler = build({
+      parser: offSunday(),
+      bookingRules: makeBookingRules(NOT_SUNDAY_RULE),
+      availability,
+      templates,
+      conversation,
+    });
+
+    await handler.handle({ from: CUSTOMER, text: '29/5 to 1/6?' });
+
+    expect(availability.isRangeAvailable).toHaveBeenCalledWith(
+      new Date('2027-05-30'),
+      new Date('2027-06-06'),
+    );
+    expect(templates.render).toHaveBeenCalledWith(
+      'dates_not_sunday_to_sunday',
+      expect.objectContaining({
+        suggested_check_in: 'Sunday, 30 May 2027',
+        suggested_check_out: 'Sunday, 6 June 2027',
+      }),
+    );
+    const parked = (conversation.updateContext as jest.Mock).mock.calls.find(
+      (c: [string, { lastIntent?: string }]) =>
+        c[1].lastIntent === 'awaiting_dates_confirmation',
+    );
+    expect(parked[1].pendingDates).toEqual({
+      checkIn: '2027-05-30',
+      checkOut: '2027-06-06',
+      guests: null,
+    });
+  });
+
+  it('offers open alternatives instead when the snapped Sunday week is reserved', async () => {
+    const availability = makeAvailability(false);
+    const templates = makeTemplates();
+    const composer = makeComposer();
+    const helpers = makeHelpers();
+    (helpers.nearbyAvailabilitySummary as jest.Mock).mockResolvedValue([
+      {
+        checkIn: new Date('2027-07-11'),
+        checkOut: new Date('2027-07-18'),
+        total: 5995,
+        weeklyRate: 5995,
+        usedBase: false,
+      },
+    ]);
+    const conversation = makeConversation();
+    const handler = build({
+      parser: offSunday(),
+      bookingRules: makeBookingRules(NOT_SUNDAY_RULE),
+      availability,
+      templates,
+      composer,
+      helpers,
+      conversation,
+    });
+
+    await handler.handle({ from: CUSTOMER, text: '29/5 to 1/6?' });
+
+    expect(templateCalls(templates)).not.toContain(
+      'dates_not_sunday_to_sunday',
+    );
+    const [pkg] = composerCalls(composer);
+    expect(pkg.scenarioHint).toBe('dates_unavailable');
+    const facts = pkg.facts as Array<{ key: string; text: string }>;
+    expect(
+      facts.find((f) => f.key === 'requested_unavailable')?.text,
+    ).toContain('Sunday, 30 May 2027 to Sunday, 6 June 2027');
+    expect(facts.find((f) => f.key === 'booking_rule')?.text).toMatch(
+      /Sunday to Sunday/,
+    );
+    expect(facts.find((f) => f.key === 'nearby_alternatives')?.text).toContain(
+      '11 July',
+    );
+    const parked = (conversation.updateContext as jest.Mock).mock.calls.find(
+      (c: [string, { lastIntent?: string }]) =>
+        c[1].lastIntent === 'awaiting_dates_confirmation',
+    );
+    expect(parked).toBeUndefined();
+  });
+
+  it('treats a snapped week held by another guest as reserved too', async () => {
+    const availability = makeAvailability(true);
+    const templates = makeTemplates();
+    const composer = makeComposer();
+    const handler = build({
+      parser: offSunday(),
+      bookingRules: makeBookingRules(NOT_SUNDAY_RULE),
+      availability,
+      holds: makeHolds(true),
+      templates,
+      composer,
+    });
+
+    await handler.handle({ from: CUSTOMER, text: '29/5 to 1/6?' });
+
+    expect(availability.isRangeAvailable).not.toHaveBeenCalled();
+    expect(templateCalls(templates)).not.toContain(
+      'dates_not_sunday_to_sunday',
+    );
+    const [pkg] = composerCalls(composer);
+    const fact = pkg.facts.find(
+      (f: { key: string }) => f.key === 'requested_unavailable',
+    );
+    expect(fact.text).toContain('held for another guest');
+  });
+
+  it('checks the min-stay suggestion against the calendar as well', async () => {
+    const availability = makeAvailability(false);
+    const templates = makeTemplates();
+    const composer = makeComposer();
+    const handler = build({
+      parser: makeParser({
+        intent: 'availability_inquiry',
+        checkIn: new Date('2027-05-30'),
+        checkOut: new Date('2027-06-02'),
+      }),
+      bookingRules: makeBookingRules(MIN_STAY_RULE),
+      availability,
+      templates,
+      composer,
+    });
+
+    await handler.handle({ from: CUSTOMER, text: '30 May for 3 nights?' });
+
+    expect(templateCalls(templates)).not.toContain('minimum_stay_not_met');
+    const [pkg] = composerCalls(composer);
+    expect(pkg.scenarioHint).toBe('dates_unavailable');
+    expect(
+      pkg.facts.find((f: { key: string }) => f.key === 'booking_rule').text,
+    ).toMatch(/7 nights/);
+  });
+
+  it('applies the same check on a hold request for off-Sunday dates', async () => {
+    const availability = makeAvailability(false);
+    const templates = makeTemplates();
+    const composer = makeComposer();
+    const holds = makeHolds(false);
+    const handler = build({
+      parser: offSunday('hold_request'),
+      bookingRules: makeBookingRules(NOT_SUNDAY_RULE),
+      availability,
+      holds,
+      templates,
+      composer,
+    });
+
+    await handler.handle({ from: CUSTOMER, text: 'can you hold 29/5 to 1/6?' });
+
+    expect(templateCalls(templates)).not.toContain(
+      'dates_not_sunday_to_sunday',
+    );
+    expect(holds.createHold).not.toHaveBeenCalled();
+    const [pkg] = composerCalls(composer);
+    expect(pkg.scenarioHint).toBe('dates_unavailable');
+  });
 });
 
 describe('MessageHandlerService.handle — discount detection', () => {
@@ -953,6 +1137,95 @@ describe('MessageHandlerService.handle — composer-driven intents', () => {
     await handler.handle({ from: CUSTOMER, text: 'yes please' });
 
     expect(availability.isRangeAvailable).toHaveBeenCalled();
+  });
+
+  // 2026-09-14: "How much is that please" straight after a Sunday suggestion
+  // parsed as pricing_inquiry, fell out of the guard, and got the
+  // date_reconfirmation_check ("Last time we spoke…") one minute in.
+  it('"how much is that?" after a date suggestion quotes the suggested week', async () => {
+    const parser = makeParser({ intent: 'pricing_inquiry' });
+    const availability = makeAvailability();
+    const templates = makeTemplates();
+    const conversation = makeConversation({
+      getState: jest.fn().mockResolvedValue({
+        status: 'bot',
+        lifecycleStatus: 'Responded',
+        lastIntent: 'awaiting_dates_confirmation',
+        pendingDates: {
+          checkIn: '2027-09-05',
+          checkOut: '2027-09-12',
+          guests: null,
+        },
+        customerName: null,
+      }),
+    });
+    const handler = build({ parser, availability, templates, conversation });
+
+    await handler.handle({ from: CUSTOMER, text: 'How much is that please' });
+
+    expect(templateCalls(templates)).not.toContain('date_reconfirmation_check');
+    expect(availability.isRangeAvailable).toHaveBeenCalledWith(
+      new Date('2027-09-05'),
+      new Date('2027-09-12'),
+    );
+    expect(templates.render).toHaveBeenCalledWith(
+      'availability_yes_quote',
+      expect.objectContaining({ price: '£2,100' }),
+    );
+  });
+
+  // The reconfirmation ("are you still looking at…?") is for a guest who comes
+  // back days later. In a live exchange the carried-over dates are simply the
+  // dates under discussion — answer for them.
+  const pendingState = (lastActivity: Date) => ({
+    status: 'bot',
+    lifecycleStatus: 'Responded',
+    lastIntent: 'availability_inquiry',
+    pendingDates: { checkIn: '2027-09-05', checkOut: '2027-09-12', guests: null },
+    customerName: null,
+    lastActivity,
+  });
+
+  it('does not send date_reconfirmation_check when the last activity was minutes ago', async () => {
+    const parser = makeParser({ intent: 'pricing_inquiry' });
+    const availability = makeAvailability();
+    const templates = makeTemplates();
+    const conversation = makeConversation({
+      getState: jest
+        .fn()
+        .mockResolvedValue(pendingState(new Date(Date.now() - 60_000))),
+    });
+    const handler = build({ parser, availability, templates, conversation });
+
+    await handler.handle({ from: CUSTOMER, text: 'how much is that?' });
+
+    expect(templateCalls(templates)).not.toContain('date_reconfirmation_check');
+    expect(availability.isRangeAvailable).toHaveBeenCalledWith(
+      new Date('2027-09-05'),
+      new Date('2027-09-12'),
+    );
+  });
+
+  it('sends date_reconfirmation_check when the guest comes back days later', async () => {
+    const parser = makeParser({ intent: 'availability_inquiry' });
+    const availability = makeAvailability();
+    const templates = makeTemplates();
+    const conversation = makeConversation({
+      getState: jest
+        .fn()
+        .mockResolvedValue(
+          pendingState(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)),
+        ),
+    });
+    const handler = build({ parser, availability, templates, conversation });
+
+    await handler.handle({ from: CUSTOMER, text: 'hi, is it still free?' });
+
+    expect(templates.render).toHaveBeenCalledWith(
+      'date_reconfirmation_check',
+      expect.objectContaining({ check_in: 'Sunday, 5 September 2027' }),
+    );
+    expect(availability.isRangeAvailable).not.toHaveBeenCalled();
   });
 });
 
@@ -1275,7 +1548,11 @@ describe('MessageHandlerService.handle — guest recognition', () => {
 
   const pastGuest: GuestContext = {
     mode: 'past_guest',
-    guest: guestRecord({ ...futureBooking, check_in: '2026-06-07', check_out: '2026-06-14' }),
+    guest: guestRecord({
+      ...futureBooking,
+      check_in: '2026-06-07',
+      check_out: '2026-06-14',
+    }),
     previousStays: 2,
     lastStay: { checkIn: '2026-06-07', checkOut: '2026-06-14' },
     hold: null,
@@ -1285,7 +1562,10 @@ describe('MessageHandlerService.handle — guest recognition', () => {
     const composer = makeComposer();
     const handler = build({
       composer,
-      parser: makeParser({ intent: 'general_info', topicKeys: ['pool_heated'] }),
+      parser: makeParser({
+        intent: 'general_info',
+        topicKeys: ['pool_heated'],
+      }),
     });
 
     await handler.handle({ from: CUSTOMER, text: 'is the pool heated?' });
@@ -1302,7 +1582,10 @@ describe('MessageHandlerService.handle — guest recognition', () => {
     const handler = build({
       composer,
       guests: makeGuests(futureGuest),
-      parser: makeParser({ intent: 'general_info', topicKeys: ['arrival_time'] }),
+      parser: makeParser({
+        intent: 'general_info',
+        topicKeys: ['arrival_time'],
+      }),
     });
 
     await handler.handle({ from: CUSTOMER, text: 'what time can we arrive?' });
@@ -1327,7 +1610,10 @@ describe('MessageHandlerService.handle — guest recognition', () => {
     const handler = build({
       composer,
       guests: makeGuests(futureGuest),
-      parser: makeParser({ intent: 'general_info', topicKeys: ['arrival_time'] }),
+      parser: makeParser({
+        intent: 'general_info',
+        topicKeys: ['arrival_time'],
+      }),
     });
 
     await handler.handle({ from: CUSTOMER, text: 'what time can we arrive?' });
@@ -1409,7 +1695,10 @@ describe('MessageHandlerService.handle — guest recognition', () => {
     const handler = build({
       knowledgeBase,
       guests: makeGuests(currentGuest),
-      parser: makeParser({ intent: 'general_info', topicKeys: ['wifi_password'] }),
+      parser: makeParser({
+        intent: 'general_info',
+        topicKeys: ['wifi_password'],
+      }),
     });
 
     await handler.handle({ from: CUSTOMER, text: "what's the wifi password?" });
@@ -1425,7 +1714,10 @@ describe('MessageHandlerService.handle — guest recognition', () => {
     const knowledgeBase = makeKnowledgeBase();
     const handler = build({
       knowledgeBase,
-      parser: makeParser({ intent: 'general_info', topicKeys: ['wifi_password'] }),
+      parser: makeParser({
+        intent: 'general_info',
+        topicKeys: ['wifi_password'],
+      }),
     });
 
     await handler.handle({ from: CUSTOMER, text: "what's the wifi password?" });
@@ -1494,12 +1786,18 @@ describe('MessageHandlerService.handle — guest recognition', () => {
     const guests = {
       resolveContext: jest.fn().mockResolvedValue(PROSPECT_CTX),
     } as unknown as GuestsService;
-    const handler = build({ composer, guests, parser: makeParser({ intent: 'greeting' }) });
+    const handler = build({
+      composer,
+      guests,
+      parser: makeParser({ intent: 'greeting' }),
+    });
 
     await handler.handle({ from: CUSTOMER, text: 'hello' });
 
     expect(composerCalls(composer)[0].facts).toEqual(
-      expect.not.arrayContaining([expect.objectContaining({ key: 'guest_context' })]),
+      expect.not.arrayContaining([
+        expect.objectContaining({ key: 'guest_context' }),
+      ]),
     );
   });
 });
